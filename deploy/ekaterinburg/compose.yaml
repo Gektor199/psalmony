@@ -18,10 +18,6 @@ services:
       DATABASE_URL: postgres://psalmony:${POSTGRES_PASSWORD:?Set PostgreSQL password}@postgres:5432/psalmony
       AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set audio secret}
       AUDIO_CLIENT_ADDRESS: 91.226.80.181:22126
-      JAMULUS_PROBE_HOST: jamulus
-      JAMULUS_PROBE_PORT: '22124'
-      JAMULUS_CLIENT_ADDRESS: 91.226.80.181:22124
-      JAMULUS_LOCATION: Екатеринбург
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,22 +44,6 @@ services:
     init: true
     healthcheck:
       disable: true
-  jamulus:
-    build:
-      context: ../jamulus
-      args:
-        JAMULUS_BUILD_JOBS: '2'
-    image: psalmony-rehearsal-jamulus
-    ports: ["91.226.80.181:22124:22124/udp"]
-    networks: [backend]
-    restart: unless-stopped
-    init: true
-    read_only: true
-    tmpfs: ["/tmp:size=16m", "/home/musician:size=16m"]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    mem_limit: 256m
-    pids_limit: 64
   postgres:
     image: postgres:17-alpine
     environment:
