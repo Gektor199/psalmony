@@ -1,0 +1,19 @@
+data/
+.env
+node_modules/
+test-results/
+.DS_Store
+
+desktop/src-tauri/target/
+releases/
+backups/
+**/.env
+
+# Generated schemas, local diagnostics and machine-specific captures
+desktop/src-tauri/gen/
+docs/screenshots/
+docs/diagnostics/
+docs/*-smoke.json
+.env.*
+!.env.example
+*.log

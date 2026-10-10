@@ -1,0 +1,72 @@
+services:
+  psalmony:
+    build:
+      context: ../..
+    environment:
+      NODE_ENV: production
+      COOKIE_SECURE: 'true'
+      DATABASE_URL: postgres://psalmony:${POSTGRES_PASSWORD:?Set PostgreSQL password}@postgres:5432/psalmony
+      AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set audio secret}
+      AUDIO_CLIENT_ADDRESS: 201.34.137.36:22126
+      JAMULUS_PROBE_HOST: 201.34.137.36
+      JAMULUS_PROBE_PORT: '22124'
+      JAMULUS_CLIENT_ADDRESS: 201.34.137.36:22124
+      JAMULUS_LOCATION: Москва
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - psalmony-data:/app/data
+      - ../../releases:/app/public/downloads:ro
+    networks: [backend,ingress]
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: netbird_netbird
+      traefik.http.routers.psalmony.rule: Host(`psalmony.201.34.137.36.sslip.io`)
+      traefik.http.routers.psalmony.entrypoints: websecure
+      traefik.http.routers.psalmony.tls: 'true'
+      traefik.http.routers.psalmony.tls.certresolver: letsencrypt
+      traefik.http.services.psalmony.loadbalancer.server.port: '3180'
+    restart: unless-stopped
+    init: true
+  audio:
+    build:
+      context: ../..
+    command: [node,server/audio-relay.mjs]
+    environment:
+      DATABASE_URL: postgres://psalmony:${POSTGRES_PASSWORD:?Set PostgreSQL password}@postgres:5432/psalmony
+      AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set audio secret}
+      AUDIO_PORT: '22126'
+    ports:
+      - '201.34.137.36:22126:22126/udp'
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      disable: true
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: psalmony
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set PostgreSQL password}
+      POSTGRES_DB: psalmony
+    volumes:
+      - psalmony-postgres:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL,pg_isready -U psalmony -d psalmony]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+volumes:
+  psalmony-data:
+  psalmony-postgres:
+networks:
+  backend:
+  ingress:
+    external: true
+    name: netbird_netbird

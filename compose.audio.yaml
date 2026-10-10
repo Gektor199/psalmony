@@ -1,0 +1,21 @@
+# Local development: docker compose -f compose.yaml -f compose.audio.yaml up -d --build
+services:
+  psalmony:
+    environment:
+      AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set a random 32-byte hex secret in .env}
+      AUDIO_CLIENT_ADDRESS: 127.0.0.1:22126
+  audio:
+    build: .
+    command: [node,server/audio-relay.mjs]
+    environment:
+      DATABASE_URL: postgres://psalmony:${POSTGRES_PASSWORD:-psalmony-local}@postgres:5432/psalmony
+      AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set a random 32-byte hex secret in .env}
+      AUDIO_PORT: '22126'
+    ports: ['127.0.0.1:22126:22126/udp']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      disable: true

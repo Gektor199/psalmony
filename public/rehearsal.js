@@ -1,0 +1,57 @@
+// Native audio room; browser offers desktop clients and optional Jamulus setup.
+export async function openRehearsal({api,dialog,esc,user,members,set,tracks,onLead,onFollow}) {
+ dialog('Репетируем вместе','<div id="rehearsal-root"><p class="muted">Открываем комнату…</p></div>',true);
+ const root=document.querySelector('#rehearsal-root');
+ if(window.PsalmonyAudio){await window.PsalmonyAudio.mount(root,{set,tracks,onLead:user.role!=='viewer'?onLead:null,onFollow});return;}
+ let state;
+ const experiences={'not-tested':'Ещё не играли',comfortable:'Играть комфортно',difficult:'Задержка мешает',unusable:'Играть не получается'};
+ const option=(values,selected)=>Object.entries(values).map(([value,label])=>`<option value="${value}" ${value===selected?'selected':''}>${label}</option>`).join('');
+ const input=(label,name,value,extra='')=>`<label class="field"><span>${label}</span><input name="${name}" value="${esc(value??'')}" ${extra}></label>`;
+ const select=(label,name,values,current)=>`<label class="field"><span>${label}</span><select name="${name}">${option(values,current)}</select></label>`;
+ const error=(form,message)=>{form.querySelector('[role=status]').textContent=message;};
+ async function load(){
+  try{state=await api('/rehearsal?setId='+encodeURIComponent(set.id));if(root.isConnected)render();}
+  catch(e){if(root.isConnected){root.innerHTML='<p class="form-error"></p><button class="btn secondary" id="rehearsal-retry">Повторить</button>';root.querySelector('p').textContent=e.message;root.querySelector('button').onclick=load;}}
+ }
+ async function checkStatus(){
+  const el=root.querySelector('#audio-server-status');if(!el)return;el.textContent='Проверяем доступность…';
+  try{const status=await api('/rehearsal/status');if(!el.isConnected)return;
+   el.textContent=status.status==='not-configured'?'Адрес аудиосервера ещё не выбран.':status.status==='external'?'Внешний сервер: проверьте подключение в Jamulus. Автоматического измерения здесь нет.':status.reachable?`Аудиосервер отвечает · подключений: ${status.connected} / 8`:'Аудиосервер не отвечает. Проверьте его запуск и подключение.';
+   el.classList.toggle('ready',status.reachable===true);
+  }catch(e){if(el.isConnected)el.textContent='Не удалось проверить сервер: '+e.message;}
+ }
+ function render(){
+  const {room,reports,pilot}=state,own=reports.find(r=>r.musician===user.id),r=own?.report||{},configured=!!room.address;
+  const local=/^(127\.|localhost:)/i.test(room.address);
+  root.innerHTML=`<div class="rehearsal-intro"><span class="tag">ПИЛОТ · 8 МУЗЫКАНТОВ</span><h3>${esc(set.title)}</h3><p>Аккорды и программа — в Psalmony. Звук инструментов и голос — в приложении Jamulus.</p></div>
+   <section class="rehearsal-connect"><div><span class="eyebrow">01 · ПОДКЛЮЧЕНИЕ</span><h3>${esc(room.location)}</h3><code id="rehearsal-address">${esc(room.address||'Выберите аудиосервер')}</code></div><button class="btn primary" id="copy-audio-address" ${configured?'':'disabled'}>Скопировать адрес</button>
+   ${local?'<p class="rehearsal-notice">Локальный тест: этот адрес работает только на компьютере с сервером. Для подключения из других домов нужен общий сетевой адрес.</p>':''}
+   <p id="audio-server-status" class="muted" role="status"></p><button class="btn secondary" id="check-audio-server">Проверить сервер</button><p class="muted small">Эта проверка выполняется со стороны Psalmony. Задержку вашего инструмента смотрите в Jamulus.</p></section>
+   ${user.role==='owner'?`<details class="rehearsal-settings" ${configured?'':'open'}><summary>Настроить аудиосервер группы</summary><form id="rehearsal-room-form"><div class="form-grid">${input('Адрес Jamulus','address',room.address||pilot?.address||'','placeholder="host:22124" required maxlength="260"')}${input('Город сервера','location',room.location,'required maxlength="100"')}</div><p class="muted small">Адрес предоставляет организатор. Сохранение адреса не запускает удалённый сервер. Доступ к звуку Jamulus настраивается отдельно от аккаунтов Psalmony.</p><p role="status" class="form-error"></p><button type="submit" class="btn secondary">Сохранить сервер</button></form></details>`:''}
+   <section class="rehearsal-steps"><span class="eyebrow">02 · ПРОВЕРКА ЗВУКА</span><ol><li><a href="https://jamulus.app/wiki/Getting-Started" target="_blank" rel="noopener noreferrer">Установите Jamulus с официального сайта</a> и подключите проводные наушники и инструмент.</li><li>В Jamulus откройте «Подключиться», вставьте адрес сервера и задайте своё имя.</li><li>Выберите аудиоинтерфейс, проверьте уровень входа. Сначала подключитесь вдвоём, затем всей группой.</li><li>Слушайте общий микс из Jamulus. Используйте умеренную громкость; видео и Bluetooth оставьте выключенными на первом тесте.</li></ol><p class="muted small">Браузер не подключает микрофон к Jamulus. Запись на нашем пилотном сервере выключена.</p></section>
+   <section><span class="eyebrow">03 · РЕЗУЛЬТАТЫ ПРОВЕРКИ</span><p class="muted small">Заполняются участниками вручную. Ping — задержка сети туда-обратно; Overall Delay — оценка полной задержки в Jamulus. Это разные показатели.</p>
+   <div class="rehearsal-table"><table><thead><tr><th>Музыкант</th><th>Город</th><th>Ping / Overall</th><th>Игра вместе</th></tr></thead><tbody>${members.map(m=>{const entry=reports.find(v=>v.musician===m.id),v=entry?.report,old=v&&v.roomRevision!==room.revision;return `<tr><td>${esc(m.name)}</td><td>${esc(v?.city||'—')}</td><td>${v?`${v.pingMs??'—'} / ${v.overallMs??'—'} мс`:'Нет измерений'}</td><td>${old?'Сервер изменён — повторите проверку':esc(experiences[v?.experience]||'Ещё не проверял')} ${entry?`<small>${esc(new Date(entry.updated_at).toLocaleString('ru-RU'))}</small>`:''}</td></tr>`;}).join('')}</tbody></table></div>
+   <details class="rehearsal-settings"><summary>Моя проверка подключения</summary><form id="rehearsal-report-form"><div class="form-grid">${input('Мой город','city',r.city||'Екатеринбург','maxlength="100"')}${input('Компьютер и аудиоинтерфейс','device',r.device,'maxlength="200" placeholder="Например, MacBook + USB-интерфейс"')}${select('Интернет','network',{unknown:'Не указано',ethernet:'Ethernet, провод',wifi:'Wi-Fi',mobile:'Мобильный интернет'},r.network||'unknown')}${select('Наушники','headphones',{unknown:'Не указано',wired:'Проводные',bluetooth:'Bluetooth'},r.headphones||'unknown')}${input('Ping из Jamulus, мс','pingMs',r.pingMs,'type="number" min="0" max="2000" step="0.1" placeholder="Пока не измерено"')}${input('Overall Delay из Jamulus, мс','overallMs',r.overallMs,'type="number" min="0" max="2000" step="0.1" placeholder="Пока не измерено"')}${select('Как удалось сыграть вместе','experience',experiences,r.experience||'not-tested')}</div><label class="field"><span>Обрывы, щелчки и другие заметки</span><textarea name="notes" maxlength="2000" rows="3">${esc(r.notes||'')}</textarea></label><p role="status" class="form-error"></p><button type="submit" class="btn primary" ${configured?'':'disabled'}>Сохранить мою проверку</button></form></details></section>
+   <div class="rehearsal-actions"><button class="btn secondary" id="refresh-rehearsal">Обновить комнату</button><button class="btn secondary" id="rehearsal-follow">Следовать за ведущим</button>${user.role!=='viewer'?'<button class="btn primary" id="rehearsal-lead">Вести программу</button>':''}</div><p class="muted small">Ведение программы переключает песни и разделы. Локальный метроном Psalmony пока не синхронизирован между участниками.</p>`;
+  root.querySelector('#check-audio-server').onclick=checkStatus;
+  root.querySelector('#refresh-rehearsal').onclick=load;
+  root.querySelector('#copy-audio-address').onclick=async()=>{try{await navigator.clipboard.writeText(room.address);root.querySelector('#copy-audio-address').textContent='Адрес скопирован';}catch{root.querySelector('#audio-server-status').textContent='Скопируйте адрес из строки выше вручную.';}};
+  const run=async fn=>{try{await fn();}catch(e){root.querySelector('#audio-server-status').textContent=e.message;}};
+  root.querySelector('#rehearsal-follow').onclick=()=>run(onFollow);
+  const lead=root.querySelector('#rehearsal-lead');if(lead)lead.onclick=()=>run(onLead);
+  const configForm=root.querySelector('#rehearsal-room-form');
+  if(configForm)configForm.onsubmit=async e=>{e.preventDefault();const button=configForm.querySelector('[type=submit]');button.disabled=true;try{const b=Object.fromEntries(new FormData(configForm));await api('/rehearsal/room',{method:'PUT',body:JSON.stringify({...b,address:b.address.trim(),revision:room.revision})});await load();}catch(e){error(configForm,e.message);}finally{button.disabled=false;}};
+  const form=root.querySelector('#rehearsal-report-form');form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;
+   try{const b=Object.fromEntries(new FormData(form));for(const key of ['pingMs','overallMs'])b[key]=b[key].trim()===''?null:Number(b[key]);const saved=await api('/rehearsal/report',{method:'PUT',body:JSON.stringify({setId:set.id,revision:own?.revision||0,roomRevision:room.revision,report:b})});
+    if(!root.isConnected)return;await load();const result=root.querySelector('#rehearsal-report-form');error(result,'Проверка сохранена');result.closest('details').open=true;
+   }catch(e){error(form,e.message);}finally{button.disabled=false;}
+  };
+  checkStatus();
+ }
+ root.closest('dialog')?.classList.add('audio-room-dialog');
+ root.innerHTML=`<div class="audio-room"><header class="room-heading"><div><span class="room-kicker">PSALMONY SESSIONS</span><h2>${esc(set.title)}</h2><p>Играйте вместе, даже когда вы в разных местах.</p></div></header><div class="room-workspace"><section class="room-stage"><div class="room-stage-heading"><span>Онлайн-репетиция</span><span>До 8 музыкантов</span></div><div class="room-waiting"><h3>Звук — в приложении Psalmony</h3><p>Библиотека, программа и комната группы в одном окне. Установите приложение и войдите в свой аккаунт.</p><div class="room-downloads"><a class="btn white" href="https://psalmony.201.34.137.36.sslip.io/downloads/Psalmony-0.4.2-mac-universal.dmg">Скачать для Mac</a><a class="btn glass" href="https://psalmony.201.34.137.36.sslip.io/downloads/Psalmony-0.4.2-windows-x64.exe">Для Windows</a></div><p class="room-release-note">Тестовая версия · без нотариализации Apple и подписи Windows</p></div></section><aside class="room-program"><span class="room-kicker">СЕГОДНЯ ИГРАЕМ</span><h3>Программа</h3><div class="room-track-list">${(tracks||[]).map((t,i)=>`<div class="room-track"><span>${String(i+1).padStart(2,'0')}</span><div><b>${esc(t.title)}</b><small>${esc(t.detail)}</small></div></div>`).join('')}</div>${user.role!=='viewer'?'<button class="btn secondary" id="browser-lead">Вести программу →</button>':''}<button class="btn text" id="browser-follow">Следовать за ведущим</button></aside></div><p class="room-feedback" role="status" id="browser-status">Аккорды и управление программой доступны и в браузере.</p><button class="btn text" id="browser-jamulus">Подключение через Jamulus и результаты проверок →</button></div>`;
+ const runBrowser=async fn=>{try{await fn();}catch(e){const status=root.querySelector('#browser-status');if(status)status.textContent=e.message;}};
+ root.querySelector('#browser-follow').onclick=()=>runBrowser(onFollow);
+ const browserLead=root.querySelector('#browser-lead');if(browserLead)browserLead.onclick=()=>runBrowser(onLead);
+ root.querySelector('#browser-jamulus').onclick=load;
+}

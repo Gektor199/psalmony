@@ -1,0 +1,11 @@
+.git
+data
+node_modules
+test-results
+.env
+
+desktop
+releases
+backups
+docs/screenshots
+**/.env

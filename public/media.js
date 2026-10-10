@@ -1,0 +1,9 @@
+import { PitchShifter } from './vendor/soundtouch.js';
+let audio=null;
+export function stopAudio(){if(audio){audio.shifter.disconnect();audio.shifter.off();audio.gain.disconnect();audio=null;}}
+export async function loadAudio(context,bytes){stopAudio();const buffer=await context.decodeAudioData(bytes);const shifter=new PitchShifter(context,buffer,4096,()=>{if(audio){audio.playing=false;audio.shifter.disconnect();document.querySelector('#advanced-play').textContent='Воспроизвести';}});const gain=context.createGain();gain.connect(context.destination);audio={shifter,gain,playing:false};shifter.tempo=1;shifter.pitch=1;shifter.on('play',detail=>{const progress=document.querySelector('#audio-progress'),time=document.querySelector('#audio-time');if(progress)progress.value=detail.percentagePlayed;if(time)time.textContent=detail.formattedTimePlayed+' / '+shifter.formattedDuration;});return shifter.formattedDuration;}
+export function toggleAudio(){if(!audio)return false;if(audio.playing)audio.shifter.disconnect();else audio.shifter.connect(audio.gain);audio.playing=!audio.playing;return audio.playing;}
+export function audioTempo(value){if(audio)audio.shifter.tempo=value;}
+export function audioPitch(value){if(audio)audio.shifter.pitchSemitones=value;}
+export function audioSeek(value){if(audio)audio.shifter.percentagePlayed=value/100;}
+export async function renderScore(bytes,element){if(!window.opensheetmusicdisplay)await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/vendor/osmd.min.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});let xml=new TextDecoder().decode(bytes);if(/<!ENTITY/i.test(xml))throw new Error('MusicXML с ENTITY не поддерживается');xml=xml.replace(/<!DOCTYPE[^>]*>/gi,'');const osmd=new window.opensheetmusicdisplay.OpenSheetMusicDisplay(element,{autoResize:true,backend:'svg',drawTitle:true});await osmd.load(xml);osmd.render();return osmd;}

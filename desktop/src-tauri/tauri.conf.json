@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Psalmony",
+  "version": "0.4.2",
+  "identifier": "music.psalmony.desktop",
+  "build": {
+    "frontendDist": "../../public"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Music",
+    "shortDescription": "Пространство музыки вашей группы",
+    "longDescription": "Библиотека, программы выступлений и репетиции группы в одном приложении.",
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-",
+      "entitlements": "Psalmony.entitlements"
+    },
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": [
+          "Russian"
+        ],
+        "installMode": "currentUser"
+      }
+    },
+    "resources": {
+      "THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
+    }
+  }
+}

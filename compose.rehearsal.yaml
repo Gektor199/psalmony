@@ -1,0 +1,23 @@
+# Opt-in local pilot. No public directory, recording, or RPC control port.
+services:
+  jamulus:
+    build: ./deploy/jamulus
+    ports:
+      - "${JAMULUS_BIND_IP:-127.0.0.1}:22124:22124/udp"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/musician
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  psalmony:
+    environment:
+      JAMULUS_PROBE_HOST: jamulus
+      JAMULUS_PROBE_PORT: 22124
+      JAMULUS_CLIENT_ADDRESS: ${JAMULUS_CLIENT_ADDRESS:-127.0.0.1:22124}
+      JAMULUS_LOCATION: ${JAMULUS_LOCATION:-Екатеринбург}
+    depends_on:
+      jamulus:
+        condition: service_healthy

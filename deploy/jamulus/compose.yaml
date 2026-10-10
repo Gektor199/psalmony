@@ -1,0 +1,26 @@
+# Standalone audio pilot; no database, recording, or public directory.
+name: psalmony-rehearsal
+services:
+  jamulus:
+    build:
+      context: .
+      args:
+        JAMULUS_BUILD_JOBS: ${JAMULUS_BUILD_JOBS:-1}
+    ports:
+      - "${JAMULUS_BIND_IP:?Set the audio server interface}:22124:22124/udp"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+      - /home/musician:size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 64
+    cpu_shares: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

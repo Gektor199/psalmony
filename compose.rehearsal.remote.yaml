@@ -1,0 +1,8 @@
+# Use with compose.yaml when audio runs on a separate host.
+services:
+  psalmony:
+    environment:
+      JAMULUS_PROBE_HOST: ${JAMULUS_REMOTE_HOST:?Set the remote audio host}
+      JAMULUS_PROBE_PORT: ${JAMULUS_REMOTE_PORT:-22124}
+      JAMULUS_CLIENT_ADDRESS: ${JAMULUS_REMOTE_HOST}:${JAMULUS_REMOTE_PORT:-22124}
+      JAMULUS_LOCATION: ${JAMULUS_REMOTE_LOCATION:-Москва}
