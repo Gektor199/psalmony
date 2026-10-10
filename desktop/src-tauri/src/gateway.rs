@@ -13,7 +13,7 @@ use std::{
 };
 use tiny_http::{Header, Request, Response, Server, StatusCode};
 static ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../public");
-const BACKEND: &str = "https://psalmony.201.34.137.36.sslip.io";
+const BACKEND: &str = "https://psalmony.91.226.80.181.sslip.io";
 const HOST: &str = "127.0.0.1:3188";
 const MAX: usize = 31 * 1024 * 1024;
 struct State {

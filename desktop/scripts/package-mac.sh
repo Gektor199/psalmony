@@ -10,5 +10,5 @@ trap 'rm -rf "$package_stage"' EXIT
 ditto "$app_path" "$package_stage/Psalmony.app"
 ln -s /Applications "$package_stage/Applications"
 mkdir -p "$project_root/releases"
-hdiutil create -volname Psalmony -srcfolder "$package_stage" -format UDZO -ov "$project_root/releases/Psalmony-0.4.2-mac-universal.dmg"
-hdiutil verify "$project_root/releases/Psalmony-0.4.2-mac-universal.dmg"
+hdiutil create -volname Psalmony -srcfolder "$package_stage" -format UDZO -ov "$project_root/releases/Psalmony-0.4.3-mac-universal.dmg"
+hdiutil verify "$project_root/releases/Psalmony-0.4.3-mac-universal.dmg"

@@ -1,4 +1,4 @@
-# Установка Psalmony 0.4.2
+# Установка Psalmony 0.4.3
 
 В репозитории находятся PWA, сервер Node.js/PostgreSQL, собственный UDP-аудиосервер и исходники desktop-клиентов macOS/Windows. Готовые установщики, пользовательские данные и секреты не входят в Git.
 
@@ -73,7 +73,7 @@ docker compose -f compose.yaml -f compose.audio.yaml logs --tail=100 audio
 
 Relay слушает только `127.0.0.1:22126/udp`. Для звука нужен desktop-клиент. Браузерная PWA не подключается к этому UDP-протоколу. Максимум — восемь участников комнаты; участники входят через аккаунты и группы Psalmony.
 
-**Важно:** готовый desktop-клиент подключается к московскому API. Для локального пилота перед сборкой замените `BACKEND` в `desktop/src-tauri/src/gateway.rs` на `http://127.0.0.1:3180`; запускайте debug-сборку (`cd desktop && npx tauri dev`). В debug-режиме разрешён аудиоадрес `127.0.0.1:22126`. Release-сборка допускает только явно заданный адрес в `Engine::connect` файла `desktop/src-tauri/src/audio.rs`.
+**Важно:** готовый desktop-клиент подключается к API в Екатеринбурге. Для локального пилота перед сборкой замените `BACKEND` в `desktop/src-tauri/src/gateway.rs` на `http://127.0.0.1:3180`; запускайте debug-сборку (`cd desktop && npx tauri dev`). В debug-режиме разрешён аудиоадрес `127.0.0.1:22126`. Release-сборка допускает только явно заданный адрес в `Engine::connect` файла `desktop/src-tauri/src/audio.rs`.
 
 ## 4. Сборка macOS
 
@@ -87,7 +87,7 @@ npm run desktop:mac
 
 Результаты:
 
-- `releases/Psalmony-0.4.2-mac-universal.dmg`;
+- `releases/Psalmony-0.4.3-mac-universal.dmg`;
 - `desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Psalmony.app`.
 
 Откройте DMG и перенесите Psalmony в Applications. Минимальная версия macOS в конфигурации — 12.0. Сборка universal поддерживает Intel и Apple Silicon. Подпись ad-hoc, нотариализации Apple нет; это пилот, не релиз App Store. Системный запрос доступа к микрофону появляется при использовании звука.
@@ -103,7 +103,7 @@ cd desktop
 npx tauri build --target x86_64-pc-windows-msvc --config src-tauri/tauri.windows.conf.json
 ```
 
-Установщик: `desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Psalmony_0.4.2_x64-setup.exe`. Запустите его и следуйте мастеру установки. Authenticode-подписи нет. Установка и звук на физическом Windows пока не проверены.
+Установщик: `desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Psalmony_0.4.3_x64-setup.exe`. Запустите его и следуйте мастеру установки. Authenticode-подписи нет. Установка и звук на физическом Windows пока не проверены.
 
 Использованный в пилоте вариант кросс-компиляции с Apple Silicon Mac:
 
@@ -120,22 +120,20 @@ PATH="/opt/homebrew/opt/llvm/bin:$PATH" npm run desktop:windows
 
 Для обычной PWA можно использовать корневой Compose за HTTPS reverse proxy. PostgreSQL оставьте на loopback или во внутренней Docker-сети. Задайте сильный `POSTGRES_PASSWORD` и `COOKIE_SECURE=true`. Прокси должен передавать исходный `Host`, направлять запросы на порт приложения 3180 и принимать вложения до 30 МБ. Не включайте secure-cookie для локального HTTP-запуска.
 
-`deploy/moscow/compose.yaml` — профиль существующего московского сервера, **не готовый универсальный профиль**. Он ожидает уже работающий Traefik, внешнюю сеть `netbird_netbird`, resolver `letsencrypt` и привязку к IP текущего сервера. На другом хосте предварительно замените:
+`deploy/ekaterinburg/compose.yaml` — профиль сервера **91.226.80.181**. Он включает приложение, PostgreSQL, собственный UDP relay, отдельный Jamulus и Caddy с автоматическим HTTPS. Веб-адрес: https://psalmony.91.226.80.181.sslip.io. Московский профиль сохранён только для истории конфигурации.
 
-- домен в правиле Traefik и имя внешней ingress-сети;
-- IP в публикации UDP 22126 и `AUDIO_CLIENT_ADDRESS`;
-- необязательные адреса старого Jamulus-пилота;
-- `BACKEND` в desktop gateway и разрешённый адрес в `Engine::connect` аудиодвижка, затем пересоберите клиенты.
-
-После настройки профиля создайте `deploy/moscow/.env` с `POSTGRES_PASSWORD` (случайный hex удобен для URL) и `AUDIO_TICKET_SECRET` (32 байта в hex, 64 символа). Файл должен быть доступен только оператору. Затем из корня репозитория:
+Создайте `deploy/ekaterinburg/.env` с `POSTGRES_PASSWORD` (случайный hex удобен для URL) и `AUDIO_TICKET_SECRET` (32 байта в hex, 64 символа). Файл должен иметь права 600. При переносе существующей базы сохраните действующие секреты. Затем из корня репозитория:
 
 ```sh
 mkdir -p releases
-docker compose -p psalmony -f deploy/moscow/compose.yaml --env-file deploy/moscow/.env up -d --build
-docker compose -p psalmony -f deploy/moscow/compose.yaml --env-file deploy/moscow/.env ps
+docker compose -f deploy/ekaterinburg/compose.yaml --env-file deploy/ekaterinburg/.env up -d --build
+docker compose -f deploy/ekaterinburg/compose.yaml --env-file deploy/ekaterinburg/.env ps
+curl https://psalmony.91.226.80.181.sslip.io/api/health
 ```
 
-Проверьте `/api/health` через свой HTTPS-домен. Для собственной аудиосвязи разрешите UDP 22126 на выбранном интерфейсе; PostgreSQL не публикуется этим профилем. Каталог `releases` используется только для раздачи готовых установщиков через `/downloads/` — положите сборки туда отдельно. Для HTTPS используется существующий Traefik; этот Compose его не устанавливает.
+Откройте TCP 80/443 для HTTPS и UDP 22126 для собственного аудио, UDP 22124 для Jamulus. PostgreSQL доступен только во внутренней Docker-сети. Caddy сохраняет сертификаты в отдельных volumes. Установщики 0.4.3 кладутся в `releases` и доступны по `/downloads/`.
+
+Для другого сервера замените IP и домен в Compose/Caddyfile, `BACKEND` в `desktop/src-tauri/src/gateway.rs`, разрешённый адрес в `Engine::connect` в `audio.rs` и ссылки загрузки в `public/rehearsal.js`, затем пересоберите клиенты. Клиенты до 0.4.3 используют старый сервер и требуют обновления. После смены домена в браузере нужно заново войти в аккаунт; локальный офлайн-кэш старого домена автоматически не переносится.
 
 Для резервной копии сохраняйте согласованно дамп PostgreSQL и volume вложений. При обновлении сохраняйте имя Compose-проекта и расположение volumes. Не заменяйте существующие секреты при обычном обновлении.
 
@@ -145,6 +143,6 @@ docker compose -p psalmony -f deploy/moscow/compose.yaml --env-file deploy/mosco
 
 Ping и Jitter описывают сеть, Delay — расчётная оценка, не измеренная полная задержка аудиотракта. В последнем Mac-пилоте реальный возврат получен, но соединение было нестабильным; совместная игра восьми физических музыкантов не подтверждена. Подробнее: [VALIDATION.md](VALIDATION.md).
 
-`audio-smoke.mjs` и `relay-return-smoke.mjs` в `scripts/` — операторские проверки московского пилота: содержат фиксированный SSH-хост и ID тестируемой группы, создают временного участника. Они не нужны для установки и не запускаются автоматически. Остальные desktop smoke-скрипты требуют уже запущенного клиента; некоторые кратко включают микрофон при нулевой громкости выхода. Запускайте их только в контролируемой тестовой сессии.
+`audio-smoke.mjs` и `relay-return-smoke.mjs` в `scripts/` — операторские проверки пилота в Екатеринбурге: содержат фиксированный SSH-хост и ID тестируемой группы, создают временного участника. Они не нужны для установки и не запускаются автоматически. Остальные desktop smoke-скрипты требуют уже запущенного клиента; некоторые кратко включают микрофон при нулевой громкости выхода. Запускайте их только в контролируемой тестовой сессии.
 
 Jamulus остаётся отдельным необязательным пилотом, описанным в README. Мобильные приложения распространяются как PWA; исходников нативных iOS/Android клиентов здесь нет.

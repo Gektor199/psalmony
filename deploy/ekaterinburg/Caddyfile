@@ -1,0 +1,4 @@
+psalmony.91.226.80.181.sslip.io {
+    encode zstd gzip
+    reverse_proxy psalmony:3180
+}

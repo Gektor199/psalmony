@@ -14,5 +14,5 @@ for(let i=0;i<6;i++){
 }
 assert.ok(samples.length>=4,'Expect fresh measurements');
 assert.ok(samples.some(s=>Number.isFinite(s.networkJitterMs)),'Expect RTT variation after two responses');
-const report={timestamp:new Date().toISOString(),test:'Mac to Moscow authenticated UDP PING/PONG',microphoneMuted:true,samples};
+const report={timestamp:new Date().toISOString(),test:'Mac to Yekaterinburg authenticated UDP PING/PONG',microphoneMuted:true,samples};
 writeFileSync('docs/ping-smoke.json',JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));

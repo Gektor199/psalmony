@@ -1,0 +1,88 @@
+name: psalmony
+services:
+  proxy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [backend]
+    restart: unless-stopped
+  psalmony:
+    build:
+      context: ../..
+    environment:
+      NODE_ENV: production
+      COOKIE_SECURE: 'true'
+      DATABASE_URL: postgres://psalmony:${POSTGRES_PASSWORD:?Set PostgreSQL password}@postgres:5432/psalmony
+      AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set audio secret}
+      AUDIO_CLIENT_ADDRESS: 91.226.80.181:22126
+      JAMULUS_PROBE_HOST: jamulus
+      JAMULUS_PROBE_PORT: '22124'
+      JAMULUS_CLIENT_ADDRESS: 91.226.80.181:22124
+      JAMULUS_LOCATION: Екатеринбург
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - psalmony-data:/app/data
+      - ../../releases:/app/public/downloads:ro
+    networks: [backend]
+    restart: unless-stopped
+    init: true
+  audio:
+    build:
+      context: ../..
+    command: [node,server/audio-relay.mjs]
+    environment:
+      DATABASE_URL: postgres://psalmony:${POSTGRES_PASSWORD:?Set PostgreSQL password}@postgres:5432/psalmony
+      AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set audio secret}
+      AUDIO_PORT: '22126'
+    ports: ["91.226.80.181:22126:22126/udp"]
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      disable: true
+  jamulus:
+    build:
+      context: ../jamulus
+      args:
+        JAMULUS_BUILD_JOBS: '2'
+    image: psalmony-rehearsal-jamulus
+    ports: ["91.226.80.181:22124:22124/udp"]
+    networks: [backend]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:size=16m", "/home/musician:size=16m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 64
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: psalmony
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set PostgreSQL password}
+      POSTGRES_DB: psalmony
+    volumes:
+      - psalmony-postgres:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL,pg_isready -U psalmony -d psalmony]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+volumes:
+  psalmony-data:
+  psalmony-postgres:
+  caddy-data:
+  caddy-config:
+networks:
+  backend:

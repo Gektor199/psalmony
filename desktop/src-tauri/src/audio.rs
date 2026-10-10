@@ -94,7 +94,7 @@ pub struct Engine {
 }
 impl Engine {
     pub fn connect(c: Connect) -> Result<Self, String> {
-        if c.address != "201.34.137.36:22126"
+        if c.address != "91.226.80.181:22126"
             && !(cfg!(debug_assertions) && c.address == "127.0.0.1:22126")
         {
             return Err("Неизвестный аудиосервер".into());
