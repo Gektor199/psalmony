@@ -207,6 +207,19 @@ fn handle(mut req: Request, state: &State) {
                         v["muted"].as_bool(),
                         v["master"].as_f64().map(|v| v as f32),
                         gain,
+                        v["id"]
+                            .as_str()
+                            .zip(v["pan"].as_f64())
+                            .map(|(id, n)| (id.to_string(), n as f32)),
+                        v["id"]
+                            .as_str()
+                            .zip(v["peerMuted"].as_bool())
+                            .map(|(id, n)| (id.to_string(), n)),
+                        v["id"]
+                            .as_str()
+                            .zip(v["solo"].as_bool())
+                            .map(|(id, n)| (id.to_string(), n)),
+                        v["inputGain"].as_f64().map(|v| v as f32),
                     )?;
                     Ok(json!({"ok":true}))
                 }
@@ -258,7 +271,7 @@ fn handle(mut req: Request, state: &State) {
             .client
             .request(upstream_method, format!("{BACKEND}{url}"))
             .body(body);
-        for name in ["Content-Type", "X-File-Name", "Range", "If-Range"] {
+        for name in ["Content-Type", "X-File-Name", "X-Revision", "Range", "If-Range"] {
             if let Some(value) = header(&req, name) {
                 request = request.header(name, value);
             }

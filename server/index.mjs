@@ -1,3 +1,5 @@
+import {imageSchema,imageHandlers,validateCovers} from './images.mjs';
+import {accountSchema,accountHandlers} from './accounts.mjs';
 import http from 'node:http';
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -24,6 +26,8 @@ CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,"user" TEXT REFERENCE
 CREATE TABLE IF NOT EXISTS invites(token TEXT PRIMARY KEY,band TEXT REFERENCES bands(id),role TEXT NOT NULL,expires BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,band TEXT REFERENCES bands(id),name TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL);
 `);
+await accountSchema(pool);
+await imageSchema(pool);
 await createLiveSchema(pool);
 await createRehearsalSchema(pool);
 function sql(text) { let n=0; return text.replace(/\?/g,()=>'$'+(++n)).replace(/\buser\b/g,'"user"'); }
@@ -35,18 +39,18 @@ const hash=v=>createHash('sha256').update(v).digest('hex');
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
 const send=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
 const rates=new Map();
-function rate(req,name,limit=30){const k=`${req.socket.remoteAddress}:${name}`,now=Date.now();const v=rates.get(k);if(!v||v.until<now) rates.set(k,{count:1,until:now+60000});else if(++v.count>limit)fail(429,'Слишком много запросов. Попробуйте через минуту.');}
+function rate(req,name,limit=30){const client=process.env.TRUST_PROXY==='true'?String(req.headers['x-forwarded-for']||req.socket.remoteAddress).split(',').pop().trim():req.socket.remoteAddress;const k=`${client}:${name}`,now=Date.now();const v=rates.get(k);if(!v||v.until<now) rates.set(k,{count:1,until:now+60000});else if(++v.count>limit)fail(429,'Слишком много запросов. Попробуйте через минуту.');}
 setInterval(async()=>{try{const now=Date.now();for(const [k,v]of rates)if(v.until<now)rates.delete(k);await run('DELETE FROM sessions WHERE expires < ?',now);await run('DELETE FROM invites WHERE expires < ?',now);}catch(e){console.error('Session cleanup failed:',e.message);}},60000).unref();
 async function body(req,max=2*1024*1024){const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>max)fail(413,'Файл или запрос слишком большой');chunks.push(c);}return Buffer.concat(chunks);}
 async function json(req){if(!req.headers['content-type']?.startsWith('application/json'))fail(415,'Ожидается JSON');try{return JSON.parse((await body(req)).toString());}catch(e){if(e.status)throw e;fail(400,'Некорректный JSON');}}
-async function session(req){const token=req.headers.cookie?.match(/(?:^|;\s*)psalmony=([^;]+)/)?.[1];if(!token)return null;return await q('SELECT sessions.*, users.name,users.email,users.guest,members.role FROM sessions JOIN users ON users.id=sessions.user JOIN members ON members.user=sessions.user AND members.band=sessions.band WHERE token=? AND expires>?',hash(token),Date.now());}
-async function need(req){const s=await session(req);if(!s)fail(401,'Войдите в аккаунт');return s;}
+async function session(req){const token=req.headers.cookie?.match(/(?:^|;\s*)psalmony=([^;]+)/)?.[1];if(!token)return null;return await q('SELECT sessions.*,users.name,users.email,users.login,users.avatar_id,users.guest,members.role FROM sessions JOIN users ON users.id=sessions.user LEFT JOIN members ON members.user=sessions.user AND members.band=sessions.band WHERE token=? AND expires>?',hash(token),Date.now());}
+async function need(req,band=true){const s=await session(req);if(!s||s.guest)fail(401,'Войдите в аккаунт');if(band&&(!s.band||!s.role))fail(403,'Сначала создайте группу или примите приглашение');return s;}
 function editor(s){if(s.role==='viewer')fail(403,'Для изменения нужны права редактора');}
 function owner(s){if(s.role!=='owner')fail(403,'Действие доступно владельцу группы');}
 function cookie(res,token,age=2592000){res.setHeader('Set-Cookie',`psalmony=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${age}${process.env.COOKIE_SECURE==='true'?'; Secure':''}`);}
 async function newSession(res,user,band){const token=randomBytes(32).toString('hex');await run('INSERT INTO sessions VALUES(?,?,?,?)',hash(token),user,band,Date.now()+2592000000);cookie(res,token);}
-async function profile(s){return {id:s.user,name:s.name,email:s.email,guest:!!s.guest,role:s.role,bandId:s.band,bands:await all('SELECT bands.id, members.role, bands.state->>\'bandName\' as name FROM members JOIN bands ON bands.id=members.band WHERE members.user=?',s.user)};}
-async function state(s){const b=await q('SELECT * FROM bands WHERE id=?',s.band);return {state:b.state,revision:b.revision,user:await profile(s),members:await all('SELECT users.id,users.name,users.email,members.role,members.instrument FROM members JOIN users ON users.id=members.user WHERE band=?',s.band)};}
+async function profile(s){return {id:s.user,name:s.name,email:s.email,login:s.login,avatarId:s.avatar_id,guest:false,role:s.role,bandId:s.band,bands:await all('SELECT bands.id, members.role, bands.state->>\'bandName\' as name FROM members JOIN bands ON bands.id=members.band WHERE members.user=?',s.user)};}
+async function state(s){if(!s.band||!s.role)return {state:null,revision:0,user:await profile(s),members:[]};const b=await q('SELECT * FROM bands WHERE id=?',s.band);return {state:b.state,revision:b.revision,user:await profile(s),members:await all('SELECT users.id,users.name,users.email,users.avatar_id AS "avatarId",members.role,members.instrument FROM members JOIN users ON users.id=members.user WHERE band=?',s.band)};}
 async function transaction(fn){const client=await pool.connect();try{await client.query('BEGIN');const result=await tx.run(client,fn);await client.query('COMMIT');return result;}catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}}
 function validState(s){
  const safeId=v=>typeof v==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(v);
@@ -66,10 +70,12 @@ function validState(s){
 }
 async function password(value){if(typeof value!=='string'||value.length<10||value.length>200)fail(400,'Пароль должен содержать от 10 до 200 символов');const salt=randomBytes(16).toString('hex');return salt+':'+Buffer.from(await scrypt(value,salt,64)).toString('hex');}
 async function matches(value,encoded){if(typeof value!=='string'||value.length>200||!encoded)return false;const[salt,digest]=encoded.split(':');const test=Buffer.from(await scrypt(value,salt,64));return timingSafeEqual(Buffer.from(digest,'hex'),test);}
-async function newBand(user,name,demo=true){const id=randomUUID(),s=seed();if(!demo){s.songs=[];s.setlists=[];s.activity=[];}s.bandName=name;await run('INSERT INTO bands(id,state) VALUES(?,?)',id,JSON.stringify(s));await run('INSERT INTO members(band,user,role) VALUES(?,?,?)',id,user,'owner');return id;}
+async function newBand(user,name,demo=true){const id=randomUUID(),s=seed();if(!demo){s.songs=[];s.setlists=[];s.activity=[];}s.albums=[];s.bandName=name;await run('INSERT INTO bands(id,state) VALUES(?,?)',id,JSON.stringify(s));await run('INSERT INTO members(band,user,role) VALUES(?,?,?)',id,user,'owner');return id;}
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json','.png':'image/png','.dmg':'application/x-apple-diskimage','.exe':'application/octet-stream','.zip':'application/zip','.json':'application/json','.txt':'text/plain; charset=utf-8'};
 const handleLive=liveHandlers({q,run,transaction,need,editor,json,send,fail});
 const handleRehearsal=rehearsalHandlers({q,all,run,transaction,need,owner,json,send,fail,config:{host:process.env.JAMULUS_PROBE_HOST,port:Number(process.env.JAMULUS_PROBE_PORT||22124),address:process.env.JAMULUS_CLIENT_ADDRESS,location:process.env.JAMULUS_LOCATION}});
+const handleAccounts=accountHandlers({pool,q,all,run,transaction,session,need,owner,json,send,fail,newSession,cookie,password,matches,newBand,profile,state});
+const handleImages=imageHandlers({data,q,run,transaction,need,editor,owner,body,send,fail,rate});
 const server=http.createServer(async(req,res)=>{
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('X-Frame-Options','SAMEORIGIN');
  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'");
@@ -79,35 +85,20 @@ const server=http.createServer(async(req,res)=>{
    const origin=req.headers.origin;if(origin&&new URL(origin).host!==req.headers.host)fail(403,'Запрос с другого сайта отклонён');
    if(req.headers['sec-fetch-site']==='cross-site')fail(403,'Запрос с другого сайта отклонён');
  }
- if(p==='/api/health'){await pool.query('SELECT 1');return send(res,200,{ok:true,version:'0.4.3',database:'postgresql'});}
+ if(p.startsWith('/api/images')){if(await handleImages(req,res,url)!==false)return;}
+ if(p==='/api/health'){await pool.query('SELECT 1');return send(res,200,{ok:true,version:'0.5.0',database:'postgresql'});}
  if(p==='/api/audio/ticket'&&req.method==='POST'){
   const s=await need(req);await json(req);rate(req,'audio-ticket',10);const secret=Buffer.from(process.env.AUDIO_TICKET_SECRET||'','hex');if(secret.length!==32||!process.env.AUDIO_CLIENT_ADDRESS)fail(503,'Свой аудиосервер пока не настроен');
   const claims={v:1,id:randomBytes(16).toString('hex'),key:randomBytes(32).toString('hex'),band:s.band,user:s.user,name:s.name.slice(0,80),expires:Date.now()+3600000};
   return send(res,201,{id:claims.id,key:claims.key,ticket:mintTicket(secret,claims),address:process.env.AUDIO_CLIENT_ADDRESS,expires:claims.expires,name:claims.name,protocol:'psm1-pcm16-mono-48k',capacity:8});
  }
- if(p==='/api/auth/guest'&&req.method==='POST'){
-  await json(req);rate(req,'guest',10);let s=await session(req);if(s)return send(res,200,await state(s));
-  const user=randomUUID();const band=await transaction(async()=>{await run('INSERT INTO users(id,name) VALUES(?,?)',user,'Музыкант');return await newBand(user,'Моя группа');});await newSession(res,user,band);return send(res,201,{ok:true});
- }
- if(p==='/api/auth/register'&&req.method==='POST'){
-  rate(req,'auth',10);const b=await json(req),email=String(b.email||'').trim().toLowerCase(),name=String(b.name||'').trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||!name||name.length>80)fail(400,'Укажите имя и корректный email');
-  const pass=await password(b.password);if(await q('SELECT id FROM users WHERE email=?',email))fail(409,'Этот email уже зарегистрирован');const old=await session(req);let user,band;
-  await transaction(async()=>{if(old?.guest){user=old.user;band=old.band;await run('UPDATE users SET email=?,name=?,password=?,guest=0 WHERE id=?',email,name,pass,user);await run('DELETE FROM sessions WHERE user=?',user);}else{user=randomUUID();await run('INSERT INTO users VALUES(?,?,?,?,0)',user,email,name,pass);band=await newBand(user,'Моя группа');}});await newSession(res,user,band);return send(res,201,{ok:true});
- }
- if(p==='/api/auth/login'&&req.method==='POST'){
-  rate(req,'auth',10);const b=await json(req),u=await q('SELECT * FROM users WHERE email=?',String(b.email||'').trim().toLowerCase());if(!u||!await matches(b.password,u.password))fail(401,'Неверный email или пароль');const old=await session(req);if(old)await run('DELETE FROM sessions WHERE token=?',old.token);const band=(await q('SELECT band FROM members WHERE user=? ORDER BY band LIMIT 1',u.id))?.band;await newSession(res,u.id,band);return send(res,200,{ok:true});
- }
- if(p==='/api/auth/logout'&&req.method==='POST'){await json(req);const s=await session(req);if(s)await run('DELETE FROM sessions WHERE token=?',s.token);cookie(res,'',0);return send(res,200,{ok:true});}
+ if(p.startsWith('/api/auth/')||p==='/api/account'||p.startsWith('/api/bands')||p.startsWith('/api/invites')){const handled=await handleAccounts(req,res,url);if(handled!==false)return;}
  if(p.startsWith('/api/live')){await handleLive(req,res,url);return;}
  if(p.startsWith('/api/rehearsal')){await handleRehearsal(req,res,url);return;}
  if(p==='/api/state'){
-  const s=await need(req);if(req.method==='GET')return send(res,200,await state(s));
-  if(req.method==='PUT'){editor(s);const b=await json(req);validState(b.state);const revision=await transaction(async()=>{const current=await q('SELECT revision,state FROM bands WHERE id=? FOR UPDATE',s.band);if(current.revision!==b.revision)fail(409,'Библиотека изменилась на другом устройстве. Сохраните копию и загрузите актуальные данные.');if(s.role!=='owner'&&current.state.bandName!==b.state.bandName)fail(403,'Название группы может менять владелец');await run('UPDATE bands SET state=?,revision=revision+1 WHERE id=?',JSON.stringify(b.state),s.band);return current.revision+1;});return send(res,200,{revision});}
+  const s=await need(req,req.method!=='GET');if(req.method==='GET')return send(res,200,await state(s));
+  if(req.method==='PUT'){editor(s);const b=await json(req);validState(b.state);await validateCovers(b.state,s.band,q,fail);const revision=await transaction(async()=>{const current=await q('SELECT revision,state FROM bands WHERE id=? FOR UPDATE',s.band);if(current.revision!==b.revision)fail(409,'Библиотека изменилась на другом устройстве. Сохраните копию и загрузите актуальные данные.');if(s.role!=='owner'&&(current.state.bandName!==b.state.bandName||current.state.coverId!==b.state.coverId))fail(403,'Название группы может менять владелец');await run('UPDATE bands SET state=?,revision=revision+1 WHERE id=?',JSON.stringify(b.state),s.band);return current.revision+1;});return send(res,200,{revision});}
  }
- if(p==='/api/bands'&&req.method==='POST'){const s=await need(req),b=await json(req);if(s.guest)fail(403,'Сначала создайте аккаунт');rate(req,'bands',10);const name=String(b.name||'').trim();if(!name||name.length>120)fail(400,'Укажите название');const id=await transaction(async()=>await newBand(s.user,name,false));await run('UPDATE sessions SET band=? WHERE token=?',id,s.token);return send(res,201,{ok:true});}
- if(p==='/api/bands/switch'&&req.method==='POST'){const s=await need(req),b=await json(req);if(!await q('SELECT 1 FROM members WHERE band=? AND user=?',b.id,s.user))fail(403,'Нет доступа к группе');await run('UPDATE sessions SET band=? WHERE token=?',b.id,s.token);return send(res,200,{ok:true});}
- if(p==='/api/invites'&&req.method==='POST'){const s=await need(req);owner(s);if(s.guest)fail(403,'Создайте аккаунт, чтобы пригласить музыкантов');const b=await json(req),role=b.role==='viewer'?'viewer':'editor',token=randomBytes(24).toString('hex');await run('INSERT INTO invites VALUES(?,?,?,?)',hash(token),s.band,role,Date.now()+604800000);return send(res,201,{token,role,expires:Date.now()+604800000});}
- if(p==='/api/invites/join'&&req.method==='POST'){const s=await need(req);if(s.guest)fail(403,'Создайте аккаунт или войдите для вступления в группу');const b=await json(req);await transaction(async()=>{const i=await q('SELECT * FROM invites WHERE token=? AND expires>? FOR UPDATE',hash(String(b.token)),Date.now());if(!i)fail(404,'Приглашение недействительно или уже использовано');await run('INSERT INTO members(band,user,role) VALUES(?,?,?) ON CONFLICT DO NOTHING',i.band,s.user,i.role);await run('DELETE FROM invites WHERE token=?',i.token);await run('UPDATE sessions SET band=? WHERE token=?',i.band,s.token);});return send(res,200,{ok:true});}
  if(p.startsWith('/api/members/')&&req.method==='PATCH'){const s=await need(req),id=p.split('/').pop(),b=await json(req),m=await q('SELECT * FROM members WHERE band=? AND user=?',s.band,id);if(!m)fail(404,'Участник не найден');if(s.user!==id)owner(s);if(b.role!==undefined){owner(s);if(m.role==='owner')fail(400,'Нельзя изменить роль владельца');if(!['editor','viewer'].includes(b.role))fail(400,'Неизвестная роль');await run('UPDATE members SET role=? WHERE band=? AND user=?',b.role,s.band,id);}if(b.instrument!==undefined)await run('UPDATE members SET instrument=? WHERE band=? AND user=?',String(b.instrument).slice(0,80),s.band,id);return send(res,200,{ok:true});}
  if(p.startsWith('/api/members/')&&req.method==='DELETE'){const s=await need(req);owner(s);const id=p.split('/').pop();if((await q('SELECT role FROM members WHERE band=? AND user=?',s.band,id))?.role==='owner')fail(400,'Владельца нельзя удалить');await transaction(async()=>{await run('DELETE FROM members WHERE band=? AND user=?',s.band,id);await run('DELETE FROM sessions WHERE band=? AND user=?',s.band,id);});return send(res,200,{ok:true});}
  if(p==='/api/files'&&req.method==='POST'){

@@ -15,6 +15,7 @@ services:
     environment:
       NODE_ENV: production
       COOKIE_SECURE: 'true'
+      TRUST_PROXY: 'true'
       DATABASE_URL: postgres://psalmony:${POSTGRES_PASSWORD:?Set PostgreSQL password}@postgres:5432/psalmony
       AUDIO_TICKET_SECRET: ${AUDIO_TICKET_SECRET:?Set audio secret}
       AUDIO_CLIENT_ADDRESS: 91.226.80.181:22126

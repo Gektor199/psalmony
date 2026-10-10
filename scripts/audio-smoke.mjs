@@ -1,15 +1,16 @@
 // Functional Mac <-> Yekaterinburg relay check. No latency measurement, no audio recording.
 import {randomUUID,randomBytes,createHash} from 'node:crypto';import {execFileSync} from 'node:child_process';import dgram from 'node:dgram';import {writeFileSync} from 'node:fs';
 import {encodePacket,inspectPacket,unseal,ReplayWindow} from '../server/audio-protocol.mjs';
-const base='https://psalmony.91.226.80.181.sslip.io',user=randomUUID(),token=randomBytes(32).toString('hex'),hash=createHash('sha256').update(token).digest('hex'),band='f9e453df-cf63-4c5f-8494-759ffa6e0a3b';
+const base='https://psalmony.91.226.80.181.sslip.io',user=randomUUID(),token=randomBytes(32).toString('hex'),hash=createHash('sha256').update(token).digest('hex'),band=process.env.PSALMONY_TEST_BAND;
 const sql=q=>execFileSync('ssh',['-o','BatchMode=yes','root@91.226.80.181','cd /opt/psalmony && docker compose -p psalmony -f deploy/ekaterinburg/compose.yaml --env-file deploy/ekaterinburg/.env exec -T postgres psql -v ON_ERROR_STOP=1 -U psalmony -d psalmony'],{input:q,encoding:'utf8'});
 const config=JSON.parse((await(await fetch('http://127.0.0.1:3188/')).text()).match(/window.psalmonyDesktop=(.*?);<\/script>/)[1]);
 const native=async(path,body)=>{const r=await fetch('http://127.0.0.1:3188/desktop/'+path,{headers:{'X-Psalmony-Desktop':config.token,'Content-Type':'application/json'},...(body===undefined?{}:{method:'POST',body:JSON.stringify(body)})});const v=await r.json();if(!r.ok)throw Error(v.error);return v;};
 const initial=await native('audio');if(!initial.connected||initial.master!==0)throw Error('Mac must be connected with output volume at zero before this check');
+if(!/^[a-f0-9-]{36}$/.test(band||''))throw Error('Set PSALMONY_TEST_BAND to the connected test group UUID');
 let socket,interval,stage='input',seen=new ReplayWindow(),counter=0n,sequence=0,received=0,nonzero=0,mutedNonzero=0,mutedFrames=0,muteAfterSequence=0;const prefix=Buffer.from([0x43,...randomBytes(3)]);
 try{
  await native('controls',{muted:false});
- sql(`BEGIN; INSERT INTO users(id,name,guest) VALUES('${user}','Проверка звука',1); INSERT INTO members(band,"user",role) VALUES('${band}','${user}','viewer'); INSERT INTO sessions VALUES('${hash}','${user}','${band}',${Date.now()+600000}); COMMIT;`);
+ sql(`BEGIN; INSERT INTO users(id,name,guest) VALUES('${user}','Проверка звука',0); INSERT INTO members(band,"user",role) VALUES('${band}','${user}','viewer'); INSERT INTO sessions VALUES('${hash}','${user}','${band}',${Date.now()+600000}); COMMIT;`);
  const response=await fetch(base+'/api/audio/ticket',{method:'POST',headers:{Cookie:'psalmony='+token,'Content-Type':'application/json'},body:'{}'});const t=await response.json();if(!response.ok)throw Error(t.error);const key=Buffer.from(t.key,'hex');socket=dgram.createSocket('udp4');socket.on('error',()=>{});await new Promise(resolve=>socket.bind(0,resolve));
  const send=(type,body=Buffer.alloc(0))=>{const nonce=Buffer.alloc(12);prefix.copy(nonce);nonce.writeBigUInt64BE(++counter,4);socket.send(encodePacket(type,t.id,key,body,nonce,type===1?t.ticket:''),22126,'91.226.80.181');};
  let joined=false;socket.on('message',bytes=>{try{const p=inspectPacket(bytes),body=unseal(key,p.cipher,p.head);if(!seen.accept(p.cipher.subarray(0,12)))return;if(p.type===4)joined=true;if(p.type===3){received++;let peak=0;for(let i=20;i<body.length;i+=2)peak=Math.max(peak,Math.abs(body.readInt16LE(i)));if(stage==='input'&&peak>0)nonzero++;if(stage==='muted'&&body.readUInt32BE(16)>muteAfterSequence){mutedFrames++;if(peak>0)mutedNonzero++;}}}catch{}});

@@ -1,7 +1,8 @@
 FROM node:24-alpine
+RUN apk add --no-cache font-dejavu
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
-RUN npm ci --omit=dev --omit=optional
+RUN npm ci --omit=dev
 COPY --chown=node:node server ./server
 COPY --chown=node:node public ./public
 RUN mkdir -p /app/data && chown node:node /app/data

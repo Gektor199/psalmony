@@ -1,5 +1,5 @@
-export const SHELL_VERSION = 'psalmony-shell-v10';
-export const SHELL_ASSETS = ['/', '/index.html', '/app.js', '/desktop.js', '/music.js', '/arrangement.js','/rehearsal.js', '/offline.js', '/media.js', '/storage.js', '/vendor/soundtouch.js', '/vendor/osmd.min.js', '/style.css', '/icon.svg', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
+export const SHELL_VERSION = 'psalmony-shell-v11';
+export const SHELL_ASSETS = ['/', '/index.html', '/app.js','/accounts.js', '/desktop.js', '/music.js', '/arrangement.js','/rehearsal.js', '/offline.js', '/media.js', '/storage.js', '/vendor/soundtouch.js', '/vendor/osmd.min.js', '/style.css', '/icon.svg', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
 
 export function collectBundle(set, library) {
   const ids = [...new Set(set.items.filter(i=>i.type==='song').map(i=>i.songId))];

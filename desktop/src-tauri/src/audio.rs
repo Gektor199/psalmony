@@ -43,6 +43,8 @@ pub struct Snapshot {
     pub output_level: f32,
     pub mic_muted: bool,
     pub master: f32,
+    pub input_gain: f32,
+    pub limiter_hits: u64,
     pub sent: u64,
     pub received: u64,
     pub concealed: u64,
@@ -64,6 +66,8 @@ impl Default for Snapshot {
             output_level: 0.,
             mic_muted: true,
             master: 0.,
+            input_gain: 1.,
+            limiter_hits: 0,
             sent: 0,
             received: 0,
             concealed: 0,
@@ -81,6 +85,10 @@ struct Controls {
     mic_muted: AtomicBool,
     master: AtomicU32,
     gains: Mutex<HashMap<String, f32>>,
+    pans: Mutex<HashMap<String, f32>>,
+    muted_peers: Mutex<HashMap<String, bool>>,
+    solo_peers: Mutex<HashMap<String, bool>>,
+    input_gain: AtomicU32,
     input_peak: AtomicU32,
     output_peak: AtomicU32,
     underruns: AtomicU32,
@@ -112,6 +120,7 @@ impl Engine {
         }));
         let controls = Arc::new(Controls::default());
         controls.mic_muted.store(true, Ordering::Relaxed);
+        controls.input_gain.store(1f32.to_bits(), Ordering::Relaxed);
         let stop = Arc::new(AtomicBool::new(false));
         let (s, k, t) = (state.clone(), controls.clone(), stop.clone());
         let handle = thread::spawn(move || {
@@ -142,6 +151,10 @@ impl Engine {
         mute: Option<bool>,
         master: Option<f32>,
         gain: Option<(String, f32)>,
+        pan: Option<(String, f32)>,
+        peer_mute: Option<(String, bool)>,
+        peer_solo: Option<(String, bool)>,
+        input_gain: Option<f32>,
     ) -> Result<(), String> {
         if let Some(m) = mute {
             self.controls.mic_muted.store(m, Ordering::Relaxed)
@@ -153,10 +166,30 @@ impl Engine {
             self.controls.master.store(v.to_bits(), Ordering::Relaxed)
         }
         if let Some((id, v)) = gain {
-            if !v.is_finite() || !(0.0..=1.0).contains(&v) {
+            if !v.is_finite() || !(0.0..=2.0).contains(&v) {
                 return Err("Громкость вне диапазона".into());
             }
             self.controls.gains.lock().unwrap().insert(id, v);
+        }
+        if let Some((id, v)) = pan {
+            if !v.is_finite() || !(-1.0..=1.0).contains(&v) {
+                return Err("Панорама вне диапазона".into());
+            }
+            self.controls.pans.lock().unwrap().insert(id, v);
+        }
+        if let Some((id, v)) = peer_mute {
+            self.controls.muted_peers.lock().unwrap().insert(id, v);
+        }
+        if let Some((id, v)) = peer_solo {
+            self.controls.solo_peers.lock().unwrap().insert(id, v);
+        }
+        if let Some(v) = input_gain {
+            if !v.is_finite() || !(0.0..=4.0).contains(&v) {
+                return Err("Усиление вне диапазона".into());
+            }
+            self.controls
+                .input_gain
+                .store(v.to_bits(), Ordering::Relaxed);
         }
         Ok(())
     }
@@ -284,7 +317,7 @@ where
 fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     d: &cpal::Device,
     c: &cpal::StreamConfig,
-    mut consumer: Consumer<f32>,
+    mut consumer: Consumer<[f32; 2]>,
     ctl: Arc<Controls>,
 ) -> Result<cpal::Stream, String> {
     let channels = c.channels as usize;
@@ -295,13 +328,19 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
             let mut missed = false;
             let mut peak = 0f32;
             for frame in samples.chunks_exact_mut(channels) {
-                let mono = consumer.pop().unwrap_or_else(|_| {
+                let stereo = consumer.pop().unwrap_or_else(|_| {
                     missed = true;
-                    0.
+                    [0., 0.]
                 });
-                peak = peak.max(mono.abs());
-                for v in frame {
-                    *v = T::from_sample(mono)
+                peak = peak.max(stereo[0].abs()).max(stereo[1].abs());
+                for (index, v) in frame.iter_mut().enumerate() {
+                    *v = T::from_sample(if channels == 1 {
+                        (stereo[0] + stereo[1]) * 0.5
+                    } else if index < 2 {
+                        stereo[index]
+                    } else {
+                        0.
+                    });
                 }
             }
             ctl.output_peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
@@ -558,7 +597,8 @@ fn run(
     let (ic, iformat) = config(&input_dev, true)?;
     let (oc, oformat) = config(&output_dev, false)?;
     let (ip, mut input_consumer) = RingBuffer::<f32>::new(48000);
-    let (mut output_producer, op) = RingBuffer::<f32>::new(48000);
+    let (mut output_producer, op) = RingBuffer::<[f32; 2]>::new(48000);
+    let mut limiter_hits = 0u64;
     let input_stream = match iformat {
         cpal::SampleFormat::F32 => input::<f32>(&input_dev, &ic, ip, ctl.clone()),
         cpal::SampleFormat::I16 => input::<i16>(&input_dev, &ic, ip, ctl.clone()),
@@ -570,7 +610,7 @@ fn run(
         _ => output::<u16>(&output_dev, &oc, op, ctl.clone()),
     }?;
     for _ in 0..960 {
-        let _ = output_producer.push(0.);
+        let _ = output_producer.push([0., 0.]);
     }
     input_stream.play().map_err(|e| e.to_string())?;
     output_stream.play().map_err(|e| e.to_string())?;
@@ -669,7 +709,11 @@ fn run(
                 let mut body = sequence.to_be_bytes().to_vec();
                 for _ in 0..FRAME {
                     let v = input_consumer.pop().unwrap_or(0.);
-                    let v = if muted { 0. } else { v.clamp(-1., 1.) };
+                    let v = if muted {
+                        0.
+                    } else {
+                        (v * f32::from_bits(ctl.input_gain.load(Ordering::Relaxed))).clamp(-1., 1.)
+                    };
                     body.extend(((v * 32767.) as i16).to_le_bytes());
                 }
                 let _ = socket.send(&cipher.encode(2, &body, None));
@@ -681,22 +725,38 @@ fn run(
             if output_producer.slots() >= 48000 - 960 {
                 let gains = ctl.gains.lock().unwrap().clone();
                 let master = f32::from_bits(ctl.master.load(Ordering::Relaxed));
-                let mut mix = vec![0f32; FRAME];
+                let mut mix = vec![[0f32; 2]; FRAME];
+                let pans = ctl.pans.lock().unwrap().clone();
+                let muted = ctl.muted_peers.lock().unwrap().clone();
+                let solos = ctl.solo_peers.lock().unwrap().clone();
+                let any_solo = peers.keys().any(|id| *solos.get(id).unwrap_or(&false));
                 for (id, p) in &mut peers {
                     let (frame, missing) = p.take(jitter);
                     if missing {
                         concealed += 1;
                     }
                     let gain = *gains.get(id).unwrap_or(&default_monitor_gain(id, &c.id));
+                    let active = !*muted.get(id).unwrap_or(&false)
+                        && (!any_solo || *solos.get(id).unwrap_or(&false));
+                    let (left, right) = pan_gains(*pans.get(id).unwrap_or(&0.));
                     for (dst, src) in mix.iter_mut().zip(frame) {
-                        *dst += src * gain;
+                        if active {
+                            dst[0] += src * gain * left;
+                            dst[1] += src * gain * right;
+                        }
                     }
                     p.level *= 0.9;
                 }
                 // Consume one output block per hardware block; bounded queue absorbs callback scheduling.
                 if output_producer.slots() >= FRAME {
                     for v in mix {
-                        let _ = output_producer.push((v * master).clamp(-0.95, 0.95));
+                        let left = v[0] * master;
+                        let right = v[1] * master;
+                        if left.abs() > 0.95 || right.abs() > 0.95 {
+                            limiter_hits += 1;
+                        }
+                        let _ = output_producer
+                            .push([left.clamp(-0.95, 0.95), right.clamp(-0.95, 0.95)]);
                     }
                 }
             }
@@ -731,6 +791,9 @@ fn run(
                         .unwrap()
                         .get(&id)
                         .unwrap_or(&default_monitor_gain(&id, &c.id)));
+                    m["pan"] = json!(*ctl.pans.lock().unwrap().get(&id).unwrap_or(&0.));
+                    m["muted"] = json!(*ctl.muted_peers.lock().unwrap().get(&id).unwrap_or(&false));
+                    m["solo"] = json!(*ctl.solo_peers.lock().unwrap().get(&id).unwrap_or(&false));
                     m["self"] = json!(id == c.id);
                     m
                 })
@@ -739,6 +802,8 @@ fn run(
             snapshot.output_level = f32::from_bits(ctl.output_peak.swap(0, Ordering::Relaxed));
             snapshot.mic_muted = ctl.mic_muted.load(Ordering::Relaxed);
             snapshot.master = f32::from_bits(ctl.master.load(Ordering::Relaxed));
+            snapshot.input_gain = f32::from_bits(ctl.input_gain.load(Ordering::Relaxed));
+            snapshot.limiter_hits = limiter_hits;
             snapshot.sent = sent;
             snapshot.received = received;
             snapshot.concealed = concealed;
@@ -850,5 +915,26 @@ mod tests {
         assert_eq!(p.take(3).0[0], 2.);
         assert!(p.take(3).1);
         assert_eq!(p.last[0], 1.3);
+    }
+}
+
+// Equal-power stereo pan; transmitted audio remains mono.
+fn pan_gains(pan: f32) -> (f32, f32) {
+    let angle = (pan.clamp(-1., 1.) + 1.) * std::f32::consts::FRAC_PI_4;
+    (angle.cos(), angle.sin())
+}
+#[cfg(test)]
+mod stereo_tests {
+    use super::*;
+    #[test]
+    fn pan_has_constant_power_and_correct_edges() {
+        for pan in [-1., -0.5, 0., 0.5, 1.] {
+            let (l, r) = pan_gains(pan);
+            assert!((l * l + r * r - 1.).abs() < 0.00001);
+        }
+        let (l, r) = pan_gains(-1.);
+        assert!((l - 1.).abs() < 0.00001 && r.abs() < 0.00001);
+        let (l, r) = pan_gains(1.);
+        assert!(l.abs() < 0.00001 && (r - 1.).abs() < 0.00001);
     }
 }
