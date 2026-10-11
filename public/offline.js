@@ -1,4 +1,4 @@
-export const SHELL_VERSION = 'psalmony-shell-v12';
+export const SHELL_VERSION = 'psalmony-shell-v13';
 export const SHELL_ASSETS = ['/app', '/index.html', '/app.js','/accounts.js','/drafts.js','/account-controls.js', '/desktop.js', '/music.js', '/arrangement.js','/rehearsal.js', '/offline.js', '/media.js', '/storage.js', '/vendor/soundtouch.js', '/vendor/osmd.min.js', '/style.css', '/icon.svg', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
 
 export function collectBundle(set, library) {

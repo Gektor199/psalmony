@@ -14,13 +14,47 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     net::{SocketAddr, UdpSocket},
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 const FRAME: usize = 240;
+const LOCAL_CAPACITY: usize = 2048;
+const LOCAL_HEADROOM: usize = 128;
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MonitorMode {
+    #[default]
+    Off = 0,
+    Local = 1,
+    Server = 2,
+}
+impl MonitorMode {
+    fn from_control(value: u32) -> Self {
+        match value & 3 {
+            1 => Self::Local,
+            2 => Self::Server,
+            _ => Self::Off,
+        }
+    }
+}
+#[derive(Clone, Default, Deserialize)]
+pub struct Preview {
+    pub input: Option<String>,
+    pub output: Option<String>,
+}
+#[derive(Clone, Copy, Default)]
+struct OutputFrame {
+    others: [f32; 2],
+    own: [f32; 2],
+}
+#[derive(Clone, Copy)]
+struct MonitorSample {
+    value: f32,
+    control: u32,
+}
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Connect {
@@ -37,9 +71,13 @@ pub struct Connect {
 pub struct Snapshot {
     pub running: bool,
     pub connected: bool,
+    pub preview: bool,
+    pub monitor_mode: MonitorMode,
+    pub local_monitor: bool,
     pub error: Option<String>,
     pub members: Vec<Value>,
     pub input_level: f32,
+    pub input_post_level: f32,
     pub output_level: f32,
     pub mic_muted: bool,
     pub master: f32,
@@ -60,9 +98,13 @@ impl Default for Snapshot {
         Self {
             running: false,
             connected: false,
+            preview: false,
+            monitor_mode: MonitorMode::Off,
+            local_monitor: false,
             error: None,
             members: vec![],
             input_level: 0.,
+            input_post_level: 0.,
             output_level: 0.,
             mic_muted: true,
             master: 0.,
@@ -90,6 +132,9 @@ struct Controls {
     solo_peers: Mutex<HashMap<String, bool>>,
     input_gain: AtomicU32,
     input_peak: AtomicU32,
+    input_post_peak: AtomicU32,
+    monitor_control: AtomicU32,
+    limiter_hits: AtomicU64,
     output_peak: AtomicU32,
     underruns: AtomicU32,
     stream_error: AtomicBool,
@@ -113,9 +158,24 @@ impl Engine {
         {
             return Err("Некорректный билет подключения".into());
         }
+        let devices = Preview {
+            input: c.input.clone(),
+            output: c.output.clone(),
+        };
+        Self::start(Some(c), devices)
+    }
+    pub fn preview(devices: Preview) -> Result<Self, String> {
+        Self::start(None, devices)
+    }
+    fn start(c: Option<Connect>, devices: Preview) -> Result<Self, String> {
         let state = Arc::new(Mutex::new(Snapshot {
             running: true,
-            jitter_ms: c.jitter_ms.unwrap_or(20).clamp(10, 80),
+            preview: c.is_none(),
+            jitter_ms: c
+                .as_ref()
+                .and_then(|c| c.jitter_ms)
+                .unwrap_or(20)
+                .clamp(10, 80),
             ..Default::default()
         }));
         let controls = Arc::new(Controls::default());
@@ -124,14 +184,18 @@ impl Engine {
         let stop = Arc::new(AtomicBool::new(false));
         let (s, k, t) = (state.clone(), controls.clone(), stop.clone());
         let handle = thread::spawn(move || {
-            if let Err(e) = run(c, s.clone(), k, t) {
+            if let Err(e) = run(c, devices, s.clone(), k, t) {
                 s.lock().unwrap().error = Some(e);
             }
             let mut v = s.lock().unwrap();
             v.running = false;
             v.connected = false;
+            v.preview = false;
+            v.monitor_mode = MonitorMode::Off;
+            v.local_monitor = false;
             v.members.clear();
             v.input_level = 0.;
+            v.input_post_level = 0.;
             v.output_level = 0.;
             v.mic_muted = true;
             v.master = 0.;
@@ -155,26 +219,56 @@ impl Engine {
         peer_mute: Option<(String, bool)>,
         peer_solo: Option<(String, bool)>,
         input_gain: Option<f32>,
+        monitor_mode: Option<MonitorMode>,
     ) -> Result<(), String> {
+        // Reject the whole update before changing any sound control.
+        if master.is_some_and(|v| !v.is_finite() || !(0.0..=1.0).contains(&v))
+            || gain
+                .as_ref()
+                .is_some_and(|(_, v)| !v.is_finite() || !(0.0..=2.0).contains(v))
+        {
+            return Err("Громкость вне диапазона".into());
+        }
+        if pan
+            .as_ref()
+            .is_some_and(|(_, v)| !v.is_finite() || !(-1.0..=1.0).contains(v))
+        {
+            return Err("Панорама вне диапазона".into());
+        }
+        if input_gain.is_some_and(|v| !v.is_finite() || !(0.0..=4.0).contains(&v)) {
+            return Err("Усиление вне диапазона".into());
+        }
+        let snapshot = self.state.lock().unwrap();
+        if !snapshot.running {
+            return Err("Аудиоустройства не запущены".into());
+        }
+        if snapshot.preview && (mute == Some(false) || monitor_mode == Some(MonitorMode::Server)) {
+            return Err("Серверный возврат и отправка доступны после подключения к группе".into());
+        }
+        drop(snapshot);
+        if let Some(mode) = monitor_mode {
+            let _ = self.controls.monitor_control.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |current| {
+                    if MonitorMode::from_control(current) == mode {
+                        None
+                    } else {
+                        Some((current.wrapping_add(4) & !3) | mode as u32)
+                    }
+                },
+            );
+        }
         if let Some(m) = mute {
             self.controls.mic_muted.store(m, Ordering::Relaxed)
         }
         if let Some(v) = master {
-            if !v.is_finite() || !(0.0..=1.0).contains(&v) {
-                return Err("Громкость вне диапазона".into());
-            }
             self.controls.master.store(v.to_bits(), Ordering::Relaxed)
         }
         if let Some((id, v)) = gain {
-            if !v.is_finite() || !(0.0..=2.0).contains(&v) {
-                return Err("Громкость вне диапазона".into());
-            }
             self.controls.gains.lock().unwrap().insert(id, v);
         }
         if let Some((id, v)) = pan {
-            if !v.is_finite() || !(-1.0..=1.0).contains(&v) {
-                return Err("Панорама вне диапазона".into());
-            }
             self.controls.pans.lock().unwrap().insert(id, v);
         }
         if let Some((id, v)) = peer_mute {
@@ -184,9 +278,6 @@ impl Engine {
             self.controls.solo_peers.lock().unwrap().insert(id, v);
         }
         if let Some(v) = input_gain {
-            if !v.is_finite() || !(0.0..=4.0).contains(&v) {
-                return Err("Усиление вне диапазона".into());
-            }
             self.controls
                 .input_gain
                 .store(v.to_bits(), Ordering::Relaxed);
@@ -251,7 +342,8 @@ fn config(
     };
     let mut ranges: Vec<_> = supported
         .filter(|c| {
-            c.min_sample_rate().0 <= 48000
+            c.channels() > 0
+                && c.min_sample_rate().0 <= 48000
                 && c.max_sample_rate().0 >= 48000
                 && matches!(
                     c.sample_format(),
@@ -284,10 +376,97 @@ fn config(
     c.buffer_size = buffer;
     Ok((c, format))
 }
+fn post_gain_sample(raw: f32, gain: f32) -> f32 {
+    if raw.is_finite() && gain.is_finite() {
+        raw.clamp(-1., 1.) * gain.clamp(0., 4.)
+    } else {
+        0.
+    }
+}
+fn transmitted_sample(post: f32, muted: bool) -> i16 {
+    if muted || !post.is_finite() {
+        0
+    } else {
+        (post.clamp(-1., 1.) * 32767.) as i16
+    }
+}
+fn capture_sample(
+    raw: f32,
+    gain: f32,
+    control: u32,
+    network: &mut Producer<f32>,
+    local: &mut Producer<MonitorSample>,
+) -> f32 {
+    let post = post_gain_sample(raw, gain);
+    let _ = network.push(post);
+    if MonitorMode::from_control(control) == MonitorMode::Local {
+        let _ = local.push(MonitorSample {
+            value: post,
+            control,
+        });
+    }
+    post
+}
+fn trim_local(consumer: &mut Consumer<MonitorSample>, frames: usize, control: u32) {
+    let keep = if MonitorMode::from_control(control) == MonitorMode::Local {
+        frames.saturating_add(LOCAL_HEADROOM).min(LOCAL_CAPACITY)
+    } else {
+        0
+    };
+    // At most LOCAL_CAPACITY pops: callbacks never allocate or wait for another thread.
+    let excess = consumer.slots().saturating_sub(keep);
+    for _ in 0..excess {
+        let _ = consumer.pop();
+    }
+}
+fn take_local(consumer: &mut Consumer<MonitorSample>, control: u32) -> f32 {
+    if MonitorMode::from_control(control) != MonitorMode::Local {
+        return 0.;
+    }
+    // Samples carry the mode generation; old monitoring audio cannot replay after re-enabling.
+    let available = consumer.slots();
+    for _ in 0..available {
+        let Ok(sample) = consumer.pop() else {
+            break;
+        };
+        if sample.control == control {
+            return sample.value;
+        }
+    }
+    0.
+}
+fn final_mix(frame: OutputFrame, local: f32, mode: MonitorMode, master: f32) -> ([f32; 2], bool) {
+    let local = if mode == MonitorMode::Local && local.is_finite() {
+        local * std::f32::consts::FRAC_1_SQRT_2
+    } else {
+        0.
+    };
+    let master = if master.is_finite() {
+        master.clamp(0., 1.)
+    } else {
+        0.
+    };
+    let mut result = [0.; 2];
+    let mut limited = false;
+    for (index, value) in result.iter_mut().enumerate() {
+        let own = if mode == MonitorMode::Server {
+            frame.own[index]
+        } else {
+            0.
+        };
+        let sum = (frame.others[index] + own + local) * master;
+        if sum.is_finite() {
+            limited |= sum.abs() > 0.95;
+            *value = sum.clamp(-0.95, 0.95);
+        }
+    }
+    (result, limited)
+}
 fn input<T: cpal::SizedSample>(
     d: &cpal::Device,
     c: &cpal::StreamConfig,
     mut p: Producer<f32>,
+    mut local: Producer<MonitorSample>,
     ctl: Arc<Controls>,
 ) -> Result<cpal::Stream, String>
 where
@@ -299,13 +478,19 @@ where
         c,
         move |samples: &[T], _| {
             let mut peak = 0f32;
+            let mut post_peak = 0f32;
+            let gain = f32::from_bits(ctl.input_gain.load(Ordering::Relaxed));
+            let control = ctl.monitor_control.load(Ordering::Relaxed);
             for frame in samples.chunks_exact(channels) {
-                let mono =
-                    frame.iter().map(|v| f32::from_sample(*v)).sum::<f32>() / channels as f32;
-                peak = peak.max(mono.abs());
-                let _ = p.push(mono);
+                let raw = frame.iter().map(|v| f32::from_sample(*v)).sum::<f32>() / channels as f32;
+                let raw = if raw.is_finite() { raw } else { 0. };
+                peak = peak.max(raw.abs());
+                post_peak =
+                    post_peak.max(capture_sample(raw, gain, control, &mut p, &mut local).abs());
             }
             ctl.input_peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
+            ctl.input_post_peak
+                .fetch_max(post_peak.to_bits(), Ordering::Relaxed);
         },
         move |_| {
             err.stream_error.store(true, Ordering::Relaxed);
@@ -317,8 +502,10 @@ where
 fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
     d: &cpal::Device,
     c: &cpal::StreamConfig,
-    mut consumer: Consumer<[f32; 2]>,
+    mut consumer: Consumer<OutputFrame>,
+    mut local: Consumer<MonitorSample>,
     ctl: Arc<Controls>,
+    preview: bool,
 ) -> Result<cpal::Stream, String> {
     let channels = c.channels as usize;
     let err = ctl.clone();
@@ -327,11 +514,19 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
         move |samples: &mut [T], _| {
             let mut missed = false;
             let mut peak = 0f32;
+            let mut limiter_hits = 0;
+            let control = ctl.monitor_control.load(Ordering::Relaxed);
+            let mode = MonitorMode::from_control(control);
+            let master = f32::from_bits(ctl.master.load(Ordering::Relaxed));
+            trim_local(&mut local, samples.len() / channels, control);
             for frame in samples.chunks_exact_mut(channels) {
-                let stereo = consumer.pop().unwrap_or_else(|_| {
-                    missed = true;
-                    [0., 0.]
+                let network = consumer.pop().unwrap_or_else(|_| {
+                    missed |= !preview;
+                    OutputFrame::default()
                 });
+                let (stereo, limited) =
+                    final_mix(network, take_local(&mut local, control), mode, master);
+                limiter_hits += u64::from(limited);
                 peak = peak.max(stereo[0].abs()).max(stereo[1].abs());
                 for (index, v) in frame.iter_mut().enumerate() {
                     *v = T::from_sample(if channels == 1 {
@@ -344,6 +539,7 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 }
             }
             ctl.output_peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
+            ctl.limiter_hits.fetch_add(limiter_hits, Ordering::Relaxed);
             if missed {
                 ctl.underruns.fetch_add(1, Ordering::Relaxed);
             }
@@ -354,6 +550,18 @@ fn output<T: cpal::SizedSample + cpal::FromSample<f32>>(
         None,
     )
     .map_err(|e| e.to_string())
+}
+fn update_controls_snapshot(snapshot: &mut Snapshot, ctl: &Controls) {
+    snapshot.input_level = f32::from_bits(ctl.input_peak.swap(0, Ordering::Relaxed));
+    snapshot.input_post_level = f32::from_bits(ctl.input_post_peak.swap(0, Ordering::Relaxed));
+    snapshot.output_level = f32::from_bits(ctl.output_peak.swap(0, Ordering::Relaxed));
+    snapshot.mic_muted = ctl.mic_muted.load(Ordering::Relaxed);
+    snapshot.master = f32::from_bits(ctl.master.load(Ordering::Relaxed));
+    snapshot.input_gain = f32::from_bits(ctl.input_gain.load(Ordering::Relaxed));
+    snapshot.monitor_mode = MonitorMode::from_control(ctl.monitor_control.load(Ordering::Relaxed));
+    snapshot.local_monitor = snapshot.monitor_mode == MonitorMode::Local;
+    snapshot.limiter_hits = ctl.limiter_hits.load(Ordering::Relaxed);
+    snapshot.output_underruns = ctl.underruns.load(Ordering::Relaxed);
 }
 // Monotonic local timing: echoed IDs carry no server clock or user data.
 #[derive(Default)]
@@ -523,6 +731,8 @@ struct Peer {
     last: Vec<f32>,
     level: f32,
     misses: u32,
+    received: u64,
+    last_received: Option<Instant>,
 }
 impl Peer {
     fn new() -> Self {
@@ -532,9 +742,13 @@ impl Peer {
             last: vec![0.; FRAME],
             level: 0.,
             misses: 0,
+            received: 0,
+            last_received: None,
         }
     }
     fn push(&mut self, sequence: u32, samples: Vec<f32>) {
+        self.received += 1;
+        self.last_received = Some(Instant::now());
         // Input metering follows received PCM, independently of playback deadlines/gain.
         self.level = self
             .level
@@ -587,33 +801,54 @@ impl Peer {
     }
 }
 fn run(
-    c: Connect,
+    c: Option<Connect>,
+    devices: Preview,
     state: Arc<Mutex<Snapshot>>,
     ctl: Arc<Controls>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let input_dev = device(c.input.as_deref(), true)?;
-    let output_dev = device(c.output.as_deref(), false)?;
+    let preview = c.is_none();
+    let input_dev = device(devices.input.as_deref(), true)?;
+    let output_dev = device(devices.output.as_deref(), false)?;
     let (ic, iformat) = config(&input_dev, true)?;
     let (oc, oformat) = config(&output_dev, false)?;
     let (ip, mut input_consumer) = RingBuffer::<f32>::new(48000);
-    let (mut output_producer, op) = RingBuffer::<[f32; 2]>::new(48000);
-    let mut limiter_hits = 0u64;
+    let (mut output_producer, op) = RingBuffer::<OutputFrame>::new(48000);
+    let (local_producer, local_consumer) = RingBuffer::<MonitorSample>::new(LOCAL_CAPACITY);
     let input_stream = match iformat {
-        cpal::SampleFormat::F32 => input::<f32>(&input_dev, &ic, ip, ctl.clone()),
-        cpal::SampleFormat::I16 => input::<i16>(&input_dev, &ic, ip, ctl.clone()),
-        _ => input::<u16>(&input_dev, &ic, ip, ctl.clone()),
+        cpal::SampleFormat::F32 => input::<f32>(&input_dev, &ic, ip, local_producer, ctl.clone()),
+        cpal::SampleFormat::I16 => input::<i16>(&input_dev, &ic, ip, local_producer, ctl.clone()),
+        _ => input::<u16>(&input_dev, &ic, ip, local_producer, ctl.clone()),
     }?;
     let output_stream = match oformat {
-        cpal::SampleFormat::F32 => output::<f32>(&output_dev, &oc, op, ctl.clone()),
-        cpal::SampleFormat::I16 => output::<i16>(&output_dev, &oc, op, ctl.clone()),
-        _ => output::<u16>(&output_dev, &oc, op, ctl.clone()),
+        cpal::SampleFormat::F32 => {
+            output::<f32>(&output_dev, &oc, op, local_consumer, ctl.clone(), preview)
+        }
+        cpal::SampleFormat::I16 => {
+            output::<i16>(&output_dev, &oc, op, local_consumer, ctl.clone(), preview)
+        }
+        _ => output::<u16>(&output_dev, &oc, op, local_consumer, ctl.clone(), preview),
     }?;
     for _ in 0..960 {
-        let _ = output_producer.push([0., 0.]);
+        let _ = output_producer.push(OutputFrame::default());
     }
     input_stream.play().map_err(|e| e.to_string())?;
     output_stream.play().map_err(|e| e.to_string())?;
+    let Some(c) = c else {
+        while !stop.load(Ordering::Relaxed) {
+            if ctl.stream_error.load(Ordering::Relaxed) {
+                return Err(
+                    "Аудиоустройство отключилось или недоступно. Выберите его заново.".into(),
+                );
+            }
+            while input_consumer.pop().is_ok() {}
+            update_controls_snapshot(&mut state.lock().unwrap(), &ctl);
+            thread::sleep(Duration::from_millis(50));
+        }
+        drop(input_stream);
+        drop(output_stream);
+        return Ok(());
+    };
     let address: SocketAddr = c.address.parse().map_err(|_| "Неверный адрес сервера")?;
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
     socket.connect(address).map_err(|e| e.to_string())?;
@@ -709,12 +944,7 @@ fn run(
                 let mut body = sequence.to_be_bytes().to_vec();
                 for _ in 0..FRAME {
                     let v = input_consumer.pop().unwrap_or(0.);
-                    let v = if muted {
-                        0.
-                    } else {
-                        (v * f32::from_bits(ctl.input_gain.load(Ordering::Relaxed))).clamp(-1., 1.)
-                    };
-                    body.extend(((v * 32767.) as i16).to_le_bytes());
+                    body.extend(transmitted_sample(v, muted).to_le_bytes());
                 }
                 let _ = socket.send(&cipher.encode(2, &body, None));
                 sent += 1;
@@ -724,12 +954,16 @@ fn run(
             }
             if output_producer.slots() >= 48000 - 960 {
                 let gains = ctl.gains.lock().unwrap().clone();
-                let master = f32::from_bits(ctl.master.load(Ordering::Relaxed));
-                let mut mix = vec![[0f32; 2]; FRAME];
+                let mut mix = vec![OutputFrame::default(); FRAME];
                 let pans = ctl.pans.lock().unwrap().clone();
                 let muted = ctl.muted_peers.lock().unwrap().clone();
                 let solos = ctl.solo_peers.lock().unwrap().clone();
-                let any_solo = peers.keys().any(|id| *solos.get(id).unwrap_or(&false));
+                let monitor =
+                    MonitorMode::from_control(ctl.monitor_control.load(Ordering::Relaxed));
+                let any_solo = peers.keys().any(|id| {
+                    (id != &c.id || monitor == MonitorMode::Server)
+                        && *solos.get(id).unwrap_or(&false)
+                });
                 for (id, p) in &mut peers {
                     let (frame, missing) = p.take(jitter);
                     if missing {
@@ -741,22 +975,21 @@ fn run(
                     let (left, right) = pan_gains(*pans.get(id).unwrap_or(&0.));
                     for (dst, src) in mix.iter_mut().zip(frame) {
                         if active {
-                            dst[0] += src * gain * left;
-                            dst[1] += src * gain * right;
+                            let channels = if id == &c.id {
+                                &mut dst.own
+                            } else {
+                                &mut dst.others
+                            };
+                            channels[0] += src * gain * left;
+                            channels[1] += src * gain * right;
                         }
                     }
                     p.level *= 0.9;
                 }
                 // Consume one output block per hardware block; bounded queue absorbs callback scheduling.
                 if output_producer.slots() >= FRAME {
-                    for v in mix {
-                        let left = v[0] * master;
-                        let right = v[1] * master;
-                        if left.abs() > 0.95 || right.abs() > 0.95 {
-                            limiter_hits += 1;
-                        }
-                        let _ = output_producer
-                            .push([left.clamp(-0.95, 0.95), right.clamp(-0.95, 0.95)]);
+                    for frame in mix {
+                        let _ = output_producer.push(frame);
                     }
                 }
             }
@@ -784,7 +1017,17 @@ fn run(
                 .map(|m| {
                     let mut m = m.clone();
                     let id = m["id"].as_str().unwrap_or("").to_string();
-                    m["level"] = json!(peers.get(&id).map_or(0., |p| p.level));
+                    let peer = peers.get(&id);
+                    let age = peer
+                        .and_then(|p| p.last_received)
+                        .map(|last| now.saturating_duration_since(last).as_millis() as u64);
+                    m["level"] = json!(peer.map_or(0., |p| if age.is_some_and(|age| age < 300) {
+                        p.level
+                    } else {
+                        0.
+                    }));
+                    m["received"] = json!(peer.map_or(0, |p| p.received));
+                    m["lastFrameAgeMs"] = json!(age);
                     m["gain"] = json!(*ctl
                         .gains
                         .lock()
@@ -798,16 +1041,10 @@ fn run(
                     m
                 })
                 .collect();
-            snapshot.input_level = f32::from_bits(ctl.input_peak.swap(0, Ordering::Relaxed));
-            snapshot.output_level = f32::from_bits(ctl.output_peak.swap(0, Ordering::Relaxed));
-            snapshot.mic_muted = ctl.mic_muted.load(Ordering::Relaxed);
-            snapshot.master = f32::from_bits(ctl.master.load(Ordering::Relaxed));
-            snapshot.input_gain = f32::from_bits(ctl.input_gain.load(Ordering::Relaxed));
-            snapshot.limiter_hits = limiter_hits;
+            update_controls_snapshot(&mut snapshot, &ctl);
             snapshot.sent = sent;
             snapshot.received = received;
             snapshot.concealed = concealed;
-            snapshot.output_underruns = ctl.underruns.load(Ordering::Relaxed);
             last_snapshot = now;
         }
         thread::sleep(Duration::from_millis(1));
@@ -820,6 +1057,206 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn test_engine(preview: bool) -> Engine {
+        let controls = Arc::new(Controls::default());
+        controls.mic_muted.store(true, Ordering::Relaxed);
+        controls.input_gain.store(1f32.to_bits(), Ordering::Relaxed);
+        Engine {
+            state: Arc::new(Mutex::new(Snapshot {
+                running: true,
+                preview,
+                ..Default::default()
+            })),
+            controls,
+            stop: Arc::new(AtomicBool::new(false)),
+            thread: None,
+        }
+    }
+    #[test]
+    fn audio_starts_silent_and_preview_rejects_send_or_server_return_atomically() {
+        let e = test_engine(true);
+        let mut snapshot = e.state.lock().unwrap().clone();
+        update_controls_snapshot(&mut snapshot, &e.controls);
+        assert!(snapshot.preview && snapshot.mic_muted);
+        assert_eq!(snapshot.monitor_mode, MonitorMode::Off);
+        assert!(!snapshot.local_monitor);
+        assert_eq!(snapshot.master, 0.);
+        for (mute, mode) in [
+            (Some(false), Some(MonitorMode::Local)),
+            (None, Some(MonitorMode::Server)),
+        ] {
+            assert!(e
+                .controls(mute, Some(0.5), None, None, None, None, Some(2.), mode)
+                .is_err());
+            assert!(e.controls.mic_muted.load(Ordering::Relaxed));
+            assert_eq!(e.controls.master.load(Ordering::Relaxed), 0);
+            assert_eq!(e.controls.monitor_control.load(Ordering::Relaxed), 0);
+            assert_eq!(
+                f32::from_bits(e.controls.input_gain.load(Ordering::Relaxed)),
+                1.
+            );
+        }
+        assert!(e
+            .controls(
+                Some(false),
+                Some(0.5),
+                None,
+                None,
+                None,
+                None,
+                Some(f32::NAN),
+                None
+            )
+            .is_err());
+        assert!(e.controls.mic_muted.load(Ordering::Relaxed));
+        assert_eq!(e.controls.master.load(Ordering::Relaxed), 0);
+        e.controls(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(2.),
+            Some(MonitorMode::Local),
+        )
+        .unwrap();
+        update_controls_snapshot(&mut snapshot, &e.controls);
+        assert_eq!(snapshot.monitor_mode, MonitorMode::Local);
+        assert!(snapshot.local_monitor && snapshot.mic_muted);
+        assert_eq!(
+            snapshot.master, 0.,
+            "selecting monitoring does not turn on output"
+        );
+        assert_eq!(snapshot.input_gain, 2.);
+    }
+    #[test]
+    fn local_input_is_post_gain_and_independent_of_network_backpressure_and_send_mute() {
+        let (mut network, mut received) = RingBuffer::<f32>::new(1);
+        let (mut local, mut monitor) = RingBuffer::<MonitorSample>::new(8);
+        let control = 5; // First explicit local-monitor generation.
+        assert_eq!(
+            capture_sample(0.25, 2., control, &mut network, &mut local),
+            0.5
+        );
+        assert_eq!(
+            capture_sample(-0.2, 4., control, &mut network, &mut local),
+            -0.8
+        );
+        // Network is full, but local monitoring still receives the newest input directly.
+        assert_eq!(take_local(&mut monitor, control), 0.5);
+        assert_eq!(take_local(&mut monitor, control), -0.8);
+        let post = received.pop().unwrap();
+        assert_eq!(transmitted_sample(post, true), 0);
+        assert_eq!(transmitted_sample(post, false), 16383);
+        let (output, _) = final_mix(OutputFrame::default(), post, MonitorMode::Local, 0.5);
+        assert!(output[0] > 0.17 && output[0] < 0.18);
+        assert_eq!(output[0], output[1]);
+        assert_eq!(post_gain_sample(0.75, 0.), 0.);
+        assert_eq!(post_gain_sample(f32::NAN, 2.), 0.);
+        assert_eq!(transmitted_sample(4., false), i16::MAX);
+    }
+    #[test]
+    fn queued_own_return_and_local_input_are_exclusive_at_the_output_callback() {
+        let frame = OutputFrame {
+            others: [0.1, 0.2],
+            own: [0.4, 0.6],
+        };
+        let (off, _) = final_mix(frame, 1., MonitorMode::Off, 0.5);
+        let (server, _) = final_mix(frame, 1., MonitorMode::Server, 0.5);
+        let (local, _) = final_mix(frame, 1., MonitorMode::Local, 0.5);
+        assert_eq!(off, [0.05, 0.1]);
+        assert_eq!(server, [0.25, 0.4]);
+        assert!((local[0] - (0.1 + std::f32::consts::FRAC_1_SQRT_2) * 0.5).abs() < 0.00001);
+        assert!((local[1] - (0.2 + std::f32::consts::FRAC_1_SQRT_2) * 0.5).abs() < 0.00001);
+        for mode in [MonitorMode::Off, MonitorMode::Local, MonitorMode::Server] {
+            assert_eq!(final_mix(frame, 4., mode, 0.).0, [0., 0.]);
+        }
+        let (limited, hit) = final_mix(frame, 4., MonitorMode::Local, 1.);
+        assert_eq!(limited, [0.95, 0.95]);
+        assert!(hit);
+        assert_eq!(final_mix(frame, f32::NAN, MonitorMode::Local, 0.5).0, off);
+        assert_eq!(
+            final_mix(frame, 1., MonitorMode::Local, f32::NAN).0,
+            [0., 0.]
+        );
+    }
+    #[test]
+    fn local_ring_is_bounded_trims_clock_drift_and_discards_old_monitor_generations() {
+        let (mut producer, mut consumer) = RingBuffer::<MonitorSample>::new(LOCAL_CAPACITY);
+        for i in 0..LOCAL_CAPACITY {
+            producer
+                .push(MonitorSample {
+                    value: i as f32,
+                    control: 5,
+                })
+                .unwrap();
+        }
+        assert!(producer
+            .push(MonitorSample {
+                value: 9999.,
+                control: 5
+            })
+            .is_err());
+        trim_local(&mut consumer, 128, 5);
+        assert_eq!(consumer.slots(), 256);
+        assert_eq!(take_local(&mut consumer, 5), (LOCAL_CAPACITY - 256) as f32);
+        assert_eq!(
+            take_local(&mut consumer, 13),
+            0.,
+            "re-enabling never replays old local samples"
+        );
+        producer
+            .push(MonitorSample {
+                value: 0.25,
+                control: 13,
+            })
+            .unwrap();
+        assert_eq!(take_local(&mut consumer, 13), 0.25);
+        assert_eq!(take_local(&mut consumer, 13), 0., "underflow is silence");
+        producer
+            .push(MonitorSample {
+                value: 0.5,
+                control: 13,
+            })
+            .unwrap();
+        trim_local(&mut consumer, usize::MAX, 16);
+        assert_eq!(consumer.slots(), 0);
+        trim_local(&mut consumer, usize::MAX, 17); // Oversized hardware blocks cannot overflow.
+    }
+    #[test]
+    fn post_gain_meter_is_independent_of_send_mute_and_serializes_monitor_contract() {
+        let e = test_engine(true);
+        e.controls
+            .input_peak
+            .store(0.3f32.to_bits(), Ordering::Relaxed);
+        e.controls
+            .input_post_peak
+            .store(1.2f32.to_bits(), Ordering::Relaxed);
+        let mut snapshot = e.state.lock().unwrap().clone();
+        update_controls_snapshot(&mut snapshot, &e.controls);
+        let value = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(value["inputLevel"], json!(0.3f32));
+        assert_eq!(value["inputPostLevel"], json!(1.2f32));
+        assert_eq!(value["monitorMode"], "off");
+        assert_eq!(value["preview"], true);
+        assert!(snapshot.mic_muted);
+        update_controls_snapshot(&mut snapshot, &e.controls);
+        assert_eq!(snapshot.input_post_level, 0.);
+        assert!(serde_json::from_value::<MonitorMode>(json!("both")).is_err());
+    }
+    #[test]
+    fn silent_received_pcm_is_distinct_from_no_server_packets() {
+        let mut peer = Peer::new();
+        assert_eq!(peer.received, 0);
+        assert!(peer.last_received.is_none());
+        peer.push(0, vec![0.; FRAME]);
+        assert_eq!(peer.received, 1);
+        assert_eq!(peer.level, 0.);
+        assert!(peer.last_received.is_some());
+        peer.push(1, vec![0.2; FRAME]);
+        assert_eq!(peer.received, 2);
+    }
     #[test]
     fn server_return_is_metered_but_self_monitoring_starts_silent() {
         assert_eq!(default_monitor_gain("self", "self"), 0.);

@@ -1,4 +1,4 @@
-use crate::audio::{self, Connect, Engine, Snapshot};
+use crate::audio::{self, Connect, Engine, MonitorMode, Preview, Snapshot};
 use include_dir::{include_dir, Dir};
 use rand::RngCore;
 use serde_json::{json, Value};
@@ -180,6 +180,15 @@ fn handle(mut req: Request, state: &State) {
                         .unwrap_or_else(Snapshot::default),
                 )
                 .unwrap()),
+                ("/desktop/preview", "POST") => {
+                    let data = read(&mut req)?;
+                    let devices: Preview = serde_json::from_slice(&data)
+                        .map_err(|_| "Некорректные настройки аудиоустройств")?;
+                    let mut engine = state.engine.lock().unwrap();
+                    engine.take();
+                    *engine = Some(Engine::preview(devices)?);
+                    Ok(json!({"ok":true}))
+                }
                 ("/desktop/connect", "POST") => {
                     let data = read(&mut req)?;
                     let c: Connect = serde_json::from_slice(&data)
@@ -197,8 +206,15 @@ fn handle(mut req: Request, state: &State) {
                     let data = read(&mut req)?;
                     let v: Value = serde_json::from_slice(&data)
                         .map_err(|_| "Некорректные настройки микшера")?;
+                    let monitor: Option<MonitorMode> = v
+                        .get("monitorMode")
+                        .map(|value| {
+                            serde_json::from_value(value.clone())
+                                .map_err(|_| "Выберите режим прослушивания: off, local или server")
+                        })
+                        .transpose()?;
                     let engine = state.engine.lock().unwrap();
-                    let e = engine.as_ref().ok_or("Звук ещё не подключён")?;
+                    let e = engine.as_ref().ok_or("Аудиоустройства ещё не запущены")?;
                     let gain = v["id"]
                         .as_str()
                         .zip(v["gain"].as_f64())
@@ -220,6 +236,7 @@ fn handle(mut req: Request, state: &State) {
                             .zip(v["solo"].as_bool())
                             .map(|(id, n)| (id.to_string(), n)),
                         v["inputGain"].as_f64().map(|v| v as f32),
+                        monitor,
                     )?;
                     Ok(json!({"ok":true}))
                 }
@@ -271,7 +288,15 @@ fn handle(mut req: Request, state: &State) {
             .client
             .request(upstream_method, format!("{BACKEND}{url}"))
             .body(body);
-        for name in ["Content-Type", "X-File-Name", "X-Revision", "X-User-Id", "X-Band-Id", "Range", "If-Range"] {
+        for name in [
+            "Content-Type",
+            "X-File-Name",
+            "X-Revision",
+            "X-User-Id",
+            "X-Band-Id",
+            "Range",
+            "If-Range",
+        ] {
             if let Some(value) = header(&req, name) {
                 request = request.header(name, value);
             }
