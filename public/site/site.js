@@ -1,11 +1,5 @@
 // Local, silent illustrations only. No microphone, account, or analytics access.
 const tabs = [...document.querySelectorAll('[data-demo-tab]')];
-const captions = {
-  studio: 'Studio — личный микс каждого музыканта.',
-  library: 'Библиотека — песни, аккорды и материалы рядом.',
-  setlist: 'Сет-лист — одна программа для всей группы.',
-};
-
 function selectTab(tab, moveFocus = false) {
   for (const item of tabs) {
     const selected = item === tab;
@@ -13,7 +7,6 @@ function selectTab(tab, moveFocus = false) {
     item.tabIndex = selected ? 0 : -1;
     document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
   }
-  document.getElementById('demo-caption').textContent = captions[tab.dataset.demoTab];
   if (moveFocus) tab.focus();
 }
 

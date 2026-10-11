@@ -1,4 +1,4 @@
-const VERSION='psalmony-shell-v13';
+const VERSION='psalmony-shell-v14';
 const ASSETS=['/app','/index.html','/app.js','/accounts.js','/drafts.js','/account-controls.js','/desktop.js','/music.js','/arrangement.js','/rehearsal.js','/offline.js','/media.js','/storage.js','/vendor/soundtouch.js','/vendor/osmd.min.js','/style.css','/icon.svg','/icon-192.png','/icon-512.png','/manifest.webmanifest'];
 const PUBLIC_PAGES=['/help','/','/privacy','/terms','/site/index.html','/site/site.css','/site/site.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(VERSION).then(c=>c.addAll(ASSETS)));self.skipWaiting();});
