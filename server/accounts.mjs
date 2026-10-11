@@ -1,3 +1,4 @@
+import {accountLifecycleSchema, accountLifecycleHandlers, createAccountGuard} from './account-lifecycle.mjs';
 import {randomBytes,randomInt,randomUUID,createHash,timingSafeEqual} from 'node:crypto';
 import sharp from 'sharp';
 const digest=v=>createHash('sha256').update(v).digest('hex');
@@ -9,13 +10,16 @@ export async function accountSchema(pool){await pool.query(`
  CREATE TABLE IF NOT EXISTS captchas(id TEXT PRIMARY KEY,answer TEXT NOT NULL,expires BIGINT NOT NULL);
  CREATE TABLE IF NOT EXISTS auth_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires BIGINT NOT NULL);
  ALTER TABLE invites ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT 0;
- `);}
-export function accountHandlers({pool,q,all,run,transaction,session,need,owner,json,send,fail,newSession,cookie,password,matches,newBand,profile,state}){
+ `);await accountLifecycleSchema(pool);}
+export function accountHandlers({pool,data,q,all,run,transaction,session,need,owner,json,send,fail,newSession,cookie,password,matches,newBand,profile,state}){
  const ip=req=>process.env.TRUST_PROXY==='true'?String(req.headers['x-forwarded-for']||req.socket.remoteAddress).split(',').pop().trim():req.socket.remoteAddress;
  async function limit(key,max,window=60000){const now=Date.now();const result=await pool.query(`INSERT INTO auth_limits(key,count,expires) VALUES($1,1,$2) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN auth_limits.expires<$3 THEN 1 ELSE auth_limits.count+1 END, expires=CASE WHEN auth_limits.expires<$3 THEN $2 ELSE auth_limits.expires END RETURNING count`,[digest(key),now+window,now]);if(result.rows[0].count>max)fail(429,'Слишком много попыток. Подождите немного.');}
  async function captchaCheck(b){const r=await q('DELETE FROM captchas WHERE id=? RETURNING answer,expires',String(b.captchaId||''));const actual=digest(String(b.captchaId||'')+':'+String(b.captchaAnswer||'').trim().toUpperCase());if(!r||r.expires<Date.now()||!timingSafeEqual(Buffer.from(r.answer,'hex'),Buffer.from(actual,'hex')))fail(400,'Код с картинки неверный или устарел. Обновите картинку.');}
+ const lockAccount=createAccountGuard({q,all,fail});
+ const lifecycle=accountLifecycleHandlers({pool,data,q,all,run,transaction,need,json,send,fail,cookie,password,matches,limit,ip,lockAccount});
  return async(req,res,url)=>{
  const p=url.pathname;
+ if(await lifecycle(req,res,url)!==false)return;
  if(p==='/api/auth/captcha'&&req.method==='GET'){
   await limit('captcha:'+ip(req),20);await run('DELETE FROM captchas WHERE expires<?',Date.now());await run('DELETE FROM auth_limits WHERE expires<?',Date.now()-86400000);
   const id=randomBytes(24).toString('hex'),alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',answer=Array.from({length:6},()=>alphabet[randomInt(alphabet.length)]).join('');
@@ -32,27 +36,79 @@ export function accountHandlers({pool,q,all,run,transaction,session,need,owner,j
   if(!/^[a-z0-9][a-z0-9_.-]{2,31}$/.test(login))fail(400,'Логин: 3–32 латинские буквы, цифры, точка, дефис или подчёркивание.');
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)fail(400,'Укажите корректную электронную почту');
   const pass=await password(b.password),id=randomUUID();
-  try{await transaction(async()=>{await run('INSERT INTO users(id,email,name,password,guest,login) VALUES(?,?,?,?,0,?)',id,email,login,pass,login);});}catch(e){if(e.code==='23505')fail(409,'Логин или электронная почта уже используются');throw e;}
-  await newSession(res,id,null);return send(res,201,{ok:true});
+  try{await transaction(async()=>{await run('INSERT INTO users(id,email,name,password,guest,login) VALUES(?,?,?,?,0,?)',id,email,login,pass,login);await newSession(res,id,null);});}catch(e){if(e.code==='23505')fail(409,'Логин или электронная почта уже используются');throw e;}
+  return send(res,201,{ok:true});
  }
  if(p==='/api/auth/login'&&req.method==='POST'){
   const b=await json(req),identity=String(b.identity||b.email||b.login||'').trim().toLowerCase();
   await limit('login-ip:'+ip(req),30);await limit('login-user:'+identity,15,300000);
-  const u=await q('SELECT * FROM users WHERE (lower(email)=? OR lower(login)=?) AND guest=0',identity,identity);
-  if(!u||!await matches(b.password,u.password))fail(401,'Неверный логин или пароль');
-  const old=await session(req);if(old)await run('DELETE FROM sessions WHERE token=?',old.token);
-  const band=(await q('SELECT band FROM members WHERE user=? ORDER BY band LIMIT 1',u.id))?.band||null;
-  await newSession(res,u.id,band);return send(res,200,{ok:true});
+  await transaction(async()=>{
+   const u=await q('SELECT * FROM users WHERE (lower(email)=? OR lower(login)=?) AND guest=0 FOR UPDATE',identity,identity);
+   if(!u||!await matches(b.password,u.password))fail(401,'Неверный логин или пароль');
+   let band=(await q('SELECT band FROM members WHERE user=? ORDER BY band LIMIT 1',u.id))?.band||null;
+   if(band){const group=await q('SELECT id FROM bands WHERE id=? FOR UPDATE',band);if(!group||!await q('SELECT 1 FROM members WHERE band=? AND user=?',band,u.id))band=null;}
+   const old=await session(req);if(old)await run('DELETE FROM sessions WHERE token=?',old.token);
+   await newSession(res,u.id,band);
+  });
+  return send(res,200,{ok:true});
  }
- if(p==='/api/auth/logout'&&req.method==='POST'){await json(req);const s=await session(req);if(s)await run('DELETE FROM sessions WHERE token=?',s.token);cookie(res,'',0);return send(res,200,{ok:true});}
+ if(p==='/api/auth/logout'&&req.method==='POST'){
+  await json(req);const s=await session(req);
+  if(s)await transaction(async()=>{await q('SELECT id FROM users WHERE id=? FOR UPDATE',s.user);await run('DELETE FROM sessions WHERE token=?',s.token);});
+  cookie(res,'',0);return send(res,200,{ok:true});
+ }
  if(p==='/api/account'&&req.method==='GET')return send(res,200,await profile(await need(req,false)));
- if(p==='/api/account'&&req.method==='PATCH'){const s=await need(req,false),b=await json(req);const name=String(b.name||'').trim();if(!name||name.length>80)fail(400,'Имя должно содержать от 1 до 80 символов');await run('UPDATE users SET name=? WHERE id=?',name,s.user);return send(res,200,{ok:true});}
- if(p==='/api/bands'&&req.method==='POST'){const s=await need(req,false),b=await json(req);await limit('bands:'+s.user,10,3600000);const name=String(b.name||'').trim();if(!name||name.length>120)fail(400,'Укажите название группы');const id=await transaction(async()=>{const id=await newBand(s.user,name,false);await run('UPDATE sessions SET band=? WHERE token=?',id,s.token);return id;});return send(res,201,{id});}
- if(p==='/api/bands/switch'&&req.method==='POST'){const s=await need(req,false),b=await json(req);if(!await q('SELECT 1 FROM members WHERE band=? AND user=?',b.id,s.user))fail(403,'Нет доступа к группе');await run('UPDATE sessions SET band=? WHERE token=?',b.id,s.token);return send(res,200,{ok:true});}
- if(p==='/api/invites'&&req.method==='POST'){const s=await need(req);owner(s);await limit('invite:'+s.user,30);const b=await json(req);if(!['editor','viewer'].includes(b.role))fail(400,'Выберите роль участника');const token=randomBytes(24).toString('hex'),expires=Date.now()+86400000;await run('INSERT INTO invites(token,band,role,expires,created_at) VALUES(?,?,?,?,?)',digest(token),s.band,b.role,expires,Date.now());return send(res,201,{token,role:b.role,expires});}
- if(p==='/api/invites'&&req.method==='GET'){const s=await need(req);owner(s);return send(res,200,await all('SELECT token AS id,role,expires,created_at FROM invites WHERE band=? AND expires>? ORDER BY created_at DESC',s.band,Date.now()));}
- if(p.startsWith('/api/invites/')&&req.method==='DELETE'){const s=await need(req);owner(s);await run('DELETE FROM invites WHERE token=? AND band=?',p.split('/').pop(),s.band);return send(res,200,{ok:true});}
- if(p==='/api/invites/join'&&req.method==='POST'){const s=await need(req,false),b=await json(req);await limit('join:'+s.user,15);await transaction(async()=>{const i=await q('SELECT * FROM invites WHERE token=? AND expires>? FOR UPDATE',digest(String(b.token||'')),Date.now());if(!i)fail(404,'Приглашение недействительно, истекло или уже использовано');if(await q('SELECT 1 FROM members WHERE band=? AND user=?',i.band,s.user))fail(409,'Вы уже участник этой группы');await run('INSERT INTO members(band,user,role) VALUES(?,?,?)',i.band,s.user,i.role);await run('DELETE FROM invites WHERE token=?',i.token);await run('UPDATE sessions SET band=? WHERE token=?',i.band,s.token);});return send(res,200,{ok:true});}
+ if(p==='/api/account'&&req.method==='PATCH'){
+  const s=await need(req,false),b=await json(req),name=String(b.name||'').trim();
+  if(!name||name.length>80)fail(400,'Имя должно содержать от 1 до 80 символов');
+  await transaction(async()=>{await lockAccount(s);await run('UPDATE users SET name=? WHERE id=?',name,s.user);});
+  return send(res,200,{ok:true});
+ }
+ if(p==='/api/bands'&&req.method==='POST'){
+  const s=await need(req,false),b=await json(req);await limit('bands:'+s.user,10,3600000);
+  const name=String(b.name||'').trim();if(!name||name.length>120)fail(400,'Укажите название группы');
+  const id=await transaction(async()=>{await lockAccount(s);const id=await newBand(s.user,name,false);await run('UPDATE sessions SET band=? WHERE token=?',id,s.token);return id;});
+  return send(res,201,{id});
+ }
+ if(p==='/api/bands/switch'&&req.method==='POST'){
+  const s=await need(req,false),b=await json(req);
+  if(typeof b.id!=='string'||b.id.length>100)fail(400,'Выберите группу');
+  await transaction(async()=>{
+   await lockAccount(s);await q('SELECT id FROM bands WHERE id=? FOR UPDATE',b.id);
+   if(!await q('SELECT 1 FROM members WHERE band=? AND user=?',b.id,s.user))fail(403,'Нет доступа к группе');
+   await run('UPDATE sessions SET band=? WHERE token=?',b.id,s.token);
+  });return send(res,200,{ok:true});
+ }
+ if(p==='/api/invites'&&req.method==='POST'){
+  const s=await need(req);await limit('invite:'+s.user,30);const b=await json(req);
+  if(!['editor','viewer'].includes(b.role))fail(400,'Выберите роль участника');
+  const token=randomBytes(24).toString('hex'),expires=Date.now()+86400000;
+  await transaction(async()=>{owner(await lockAccount(s,{band:true}));await run('INSERT INTO invites(token,band,role,expires,created_at) VALUES(?,?,?,?,?)',digest(token),s.band,b.role,expires,Date.now());});
+  return send(res,201,{token,role:b.role,expires});
+ }
+ if(p==='/api/invites'&&req.method==='GET'){
+  const s=await need(req);const invites=await transaction(async()=>{owner(await lockAccount(s,{band:true}));return all('SELECT token AS id,role,expires,created_at FROM invites WHERE band=? AND expires>? ORDER BY created_at DESC',s.band,Date.now());});
+  return send(res,200,invites);
+ }
+ if(p.startsWith('/api/invites/')&&req.method==='DELETE'){
+  const s=await need(req);
+  await transaction(async()=>{owner(await lockAccount(s,{band:true}));await run('DELETE FROM invites WHERE token=? AND band=?',p.split('/').pop(),s.band);});
+  return send(res,200,{ok:true});
+ }
+ if(p==='/api/invites/join'&&req.method==='POST'){
+  const s=await need(req,false),b=await json(req);await limit('join:'+s.user,15);
+  await transaction(async()=>{
+   await lockAccount(s);
+   const token=digest(String(b.token||'')),found=await q('SELECT band FROM invites WHERE token=?',token);
+   if(!found)fail(404,'Приглашение недействительно, истекло или уже использовано');
+   await q('SELECT id FROM bands WHERE id=? FOR UPDATE',found.band);
+   const i=await q('SELECT * FROM invites WHERE token=? AND expires>? FOR UPDATE',token,Date.now());
+   if(!i)fail(404,'Приглашение недействительно, истекло или уже использовано');
+   if(await q('SELECT 1 FROM members WHERE band=? AND user=?',i.band,s.user))fail(409,'Вы уже участник этой группы');
+   await run('INSERT INTO members(band,user,role) VALUES(?,?,?)',i.band,s.user,i.role);
+   await run('DELETE FROM invites WHERE token=?',i.token);await run('UPDATE sessions SET band=? WHERE token=?',i.band,s.token);
+  });return send(res,200,{ok:true});
+ }
  return false;
  };
 }

@@ -31,3 +31,27 @@ test('opt-in server return echoes own PCM; legacy clients do not hear themselves
  socket.sent=[];inject(socket,legacy,TYPES.AUDIO,pcm);assert.equal(socket.sent.length,1);assert.equal(socket.sent[0].address,self.address);
  }finally{relay.close();}
 });
+
+
+test('relay requires current access before admission and refuses revoked ticket reuse', async()=>{
+ let allowed=true;const checked=[];const socket=new Socket();
+ const relay=createRelay({secret,socket,member:async(band,user,session)=>{checked.push({band,user,session});return allowed;}});
+ const c={...claims(20),session:'session-hash'},p=peer(c);
+ try{
+  inject(socket,p,TYPES.JOIN);await new Promise(setImmediate);assert.equal(relay.sessions.size,1);assert.equal(checked[0].session,c.session);
+  allowed=false;socket.sent=[];await relay.checkAccess();assert.equal(relay.sessions.size,0);assert.equal(inspectPacket(socket.sent[0].bytes).type,TYPES.ERROR);
+  socket.sent=[];inject(socket,p,TYPES.JOIN);await new Promise(setImmediate);assert.equal(relay.sessions.size,0);assert.equal(socket.sent.length,0);
+ }finally{relay.close();}
+});
+
+test('relay fails closed on access-check errors and concurrent admissions preserve capacity', async()=>{
+ const socket=new Socket();let reject=true;
+ const relay=createRelay({secret,socket,capacity:1,member:async()=>{await new Promise(setImmediate);if(reject)throw Error('database unavailable');return true;}});
+ const a=peer(claims(21)),b=peer(claims(22));
+ try{
+  inject(socket,a,TYPES.JOIN);await new Promise(setImmediate);await new Promise(setImmediate);assert.equal(relay.sessions.size,0);
+  reject=false;inject(socket,a,TYPES.JOIN);inject(socket,a,TYPES.JOIN);inject(socket,b,TYPES.JOIN);
+  await new Promise(setImmediate);await new Promise(setImmediate);assert.equal(relay.sessions.size,1);assert.equal(relay.sessions.get(a.c.id).user,a.c.user);
+  reject=true;await relay.checkAccess();assert.equal(relay.sessions.size,0);
+ }finally{relay.close();}
+});

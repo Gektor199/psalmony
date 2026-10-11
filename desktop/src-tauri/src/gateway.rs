@@ -67,7 +67,7 @@ impl Gateway {
             }
         });
         Ok(Self {
-            url: format!("http://{HOST}/"),
+            url: format!("http://{HOST}/app"),
             state,
             thread: Some(handle),
         })
@@ -271,7 +271,7 @@ fn handle(mut req: Request, state: &State) {
             .client
             .request(upstream_method, format!("{BACKEND}{url}"))
             .body(body);
-        for name in ["Content-Type", "X-File-Name", "X-Revision", "Range", "If-Range"] {
+        for name in ["Content-Type", "X-File-Name", "X-Revision", "X-User-Id", "X-Band-Id", "Range", "If-Range"] {
             if let Some(value) = header(&req, name) {
                 request = request.header(name, value);
             }
@@ -330,8 +330,14 @@ fn handle(mut req: Request, state: &State) {
     if !matches!(method.as_str(), "GET" | "HEAD") {
         return error(req, 405, "Метод не поддерживается");
     }
-    let name = if path == "/" {
+    let name = if matches!(path, "/" | "/app" | "/app/") {
         "index.html"
+    } else if path == "/help" {
+        "site/help.html"
+    } else if path == "/privacy" {
+        "site/privacy.html"
+    } else if path == "/terms" {
+        "site/terms.html"
     } else {
         path.trim_start_matches('/')
     };

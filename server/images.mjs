@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {mkdirSync,writeFileSync,unlinkSync,createReadStream} from 'node:fs';
 import {join} from 'node:path';
 export async function imageSchema(pool){await pool.query(`CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,band TEXT REFERENCES bands(id) ON DELETE CASCADE,owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,size INTEGER NOT NULL,created_at TIMESTAMPTZ DEFAULT now());`);}
-export function imageHandlers({data,q,run,transaction,need,editor,owner,body,send,fail,rate}){
+export function imageHandlers({lockAccount,data,q,run,transaction,need,editor,owner,body,send,fail,rate}){
  const dir=join(data,'images');mkdirSync(dir,{recursive:true});
  return async(req,res,url)=>{
   if(url.pathname==='/api/images'&&req.method==='POST'){
@@ -15,7 +15,7 @@ export function imageHandlers({data,q,run,transaction,need,editor,owner,body,sen
    try{const image=sharp(bytes,{limitInputPixels:25000000,animated:false,failOn:'warning'}),meta=await image.metadata();if(!['jpeg','png','webp','avif','heif'].includes(meta.format)||(meta.pages||1)>1)fail(400,'Используйте неподвижный JPG, PNG, WebP или AVIF');output=await image.rotate().resize(kind==='avatar'?512:1200,kind==='avatar'?512:1200,{fit:'cover',position:'attention',withoutEnlargement:true}).webp({quality:85}).toBuffer();}catch(e){if(e.status)throw e;fail(400,'Изображение не читается или превышает 25 мегапикселей');}
    const id=randomUUID();writeFileSync(join(dir,id),output,{mode:0o600});
    try{await transaction(async()=>{
-    const u=await q('SELECT id FROM users WHERE id=? FOR UPDATE',s.user);if(!u)fail(401,'Войдите снова');
+    const current=await lockAccount(s,{band:kind!=='avatar'});if(kind==='band')owner(current);else if(kind!=='avatar')editor(current);
     const group=kind!=='avatar'?await q('SELECT state,revision FROM bands WHERE id=? FOR UPDATE',s.band):null;
     const used=await q('SELECT coalesce(sum(size),0) AS size FROM images WHERE '+(kind==='avatar'?'owner_id=?':'band=?'),kind==='avatar'?s.user:s.band);
     if(Number(used.size)+output.length>(kind==='avatar'?20:200)*1024*1024)fail(413,'Лимит изображений исчерпан');

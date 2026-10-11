@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /app
+Disallow: /index.html
+Disallow: /api/
+Disallow: /desktop/
+Disallow: /downloads/

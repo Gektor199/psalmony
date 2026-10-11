@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f5f0">
+  <meta name="description" content="Psalmony — музыкальное пространство для вашей группы. Соберите репертуар, подготовьте сет-лист и репетируйте вместе. Браузер, PWA и настольные клиенты macOS и Windows.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Psalmony — ваша музыка. Общий язык.">
+  <meta property="og:description" content="Песни, сет-листы и совместные репетиции в одном музыкальном пространстве.">
+  <title>Psalmony — ваша музыка. Общий язык.</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site/site.css">
+  <script src="/site/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Перейти к содержимому</a>
+  <svg class="svg-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></symbol>
+    <symbol id="note" viewBox="0 0 24 24"><path d="M9 17V5l11-2v12M9 9l11-2"/><ellipse cx="5.5" cy="18" rx="3.5" ry="3"/><ellipse cx="16.5" cy="16" rx="3.5" ry="3"/></symbol>
+    <symbol id="headphones" viewBox="0 0 24 24"><path d="M4 14v-3a8 8 0 0 1 16 0v3M4 12H3v8h5v-8H4Zm16 0h1v8h-5v-8h4Z"/></symbol>
+    <symbol id="screen" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M12 17v4m-5 0h10"/></symbol>
+    <symbol id="phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4m-3 14h2"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="signal" viewBox="0 0 24 24"><path d="M4 18v3M9 13v8m5-13v13m5-19v19"/></symbol>
+    <symbol id="set" viewBox="0 0 24 24"><path d="M9 5h12M9 12h12M9 19h12M3 5h.01M3 12h.01M3 19h.01"/></symbol>
+    <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  </defs></svg>
+
+  <header class="site-header wrap">
+    <a class="brand" href="/" aria-label="Psalmony — главная"><img src="/icon.svg" width="34" height="34" alt=""><span>Psalmony</span><span class="beta-tag">beta</span></a>
+    <nav aria-label="Основная навигация">
+      <a href="#possibilities">Возможности</a>
+      <a href="#studio">Studio</a>
+      <a href="#devices">Устройства</a>
+    </nav>
+    <a class="header-open" href="/app">Войти <svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-intro">
+        <div class="hero-heading">
+          <p class="eyebrow"><span class="little-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span> Пространство для музыкантов</p>
+          <h1 id="hero-title">Ваша музыка.<br><span>Общий язык.</span></h1>
+        </div>
+        <div class="hero-copy">
+          <p>Соберите любимые песни.<br> Подготовьте программу.<br> И сыграйте её вместе.</p>
+          <div class="hero-actions"><a class="button button-dark" href="/app">Начать в Psalmony <svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a><a class="text-link" href="#download">Скачать для компьютера <svg class="icon" aria-hidden="true"><use href="#download"/></svg></a></div>
+          <span class="hero-note">Библиотека и сет-листы — прямо в браузере</span>
+        </div>
+      </div>
+
+      <figure class="product-showcase" id="product-demo">
+        <div class="showcase-topline">
+          <div class="demo-tabs" role="tablist" aria-label="Примеры интерфейса Psalmony">
+            <button id="tab-studio" type="button" role="tab" aria-selected="true" aria-controls="panel-studio" data-demo-tab="studio">Studio</button>
+            <button id="tab-library" type="button" role="tab" aria-selected="false" aria-controls="panel-library" tabindex="-1" data-demo-tab="library">Библиотека</button>
+            <button id="tab-setlist" type="button" role="tab" aria-selected="false" aria-controls="panel-setlist" tabindex="-1" data-demo-tab="setlist">Сет-лист</button>
+          </div>
+          <span class="showcase-label">Всё на своих местах</span>
+        </div>
+        <div class="demo-panel studio-preview" role="tabpanel" id="panel-studio" aria-labelledby="tab-studio" tabindex="0">
+          <div class="preview-heading"><div><span class="studio-wordmark">PSALMONY / STUDIO</span><h2>Встречаемся в музыке</h2></div><span class="demo-badge">Пример комнаты</span></div>
+          <div class="console-toolbar"><span><b>Пульт репетиции</b><span class="console-toolbar-note">Личный микс</span></span><button type="button" id="reset-demo">Сбросить пример</button></div>
+          <div class="mixing-console">
+            <div class="mixer-strip input-strip">
+              <span class="channel-route">Устройство</span><div class="channel-mode"><span>INPUT</span><span>01</span></div><span class="knob-label">Усиление</span><span class="rotary-knob" aria-hidden="true"></span>
+              <div class="channel-readouts"><span>0.0</span><span>−24.6</span></div>
+              <div class="fader-area input-level"><span class="input-label">MONO<br>IN</span><div class="meter-track" aria-hidden="true"><i style="--level:63%"></i></div><span class="fader-scale" aria-hidden="true">0<br>−6<br>−12<br>−24<br>−36<br>−48</span></div>
+              <span class="channel-static-button">Ваш сигнал</span><div class="channel-name"><b>Ваш вход</b><span>С аудиоустройства</span></div>
+            </div>
+            <div class="mixer-strip" data-channel="return">
+              <span class="channel-route">Свой возврат</span><div class="channel-mode"><span>MONITOR</span><span>02</span></div><span class="knob-label">Панорама · C</span><span class="rotary-knob" aria-hidden="true"></span>
+              <div class="channel-readouts"><output for="fader-return" id="value-return">−12.0</output><span>−28.1</span></div>
+              <div class="fader-area"><input id="fader-return" class="demo-fader" type="range" min="-60" max="6" value="-12" step="1" aria-label="Свой возврат, громкость в децибелах" aria-valuetext="Минус 12 децибел"><span class="fader-scale" aria-hidden="true">+6<br>0<br>−12<br>−24<br>−36<br>−60</span><div class="meter-track" aria-hidden="true"><i style="--level:46%"></i></div></div>
+              <button class="channel-mute" type="button" aria-pressed="false" aria-label="Выключить свой возврат в примере">M</button><div class="channel-name"><b>Ваш возврат</b><span>Вы · с сервера</span></div>
+            </div>
+            <div class="mixer-strip" data-channel="guitar">
+              <span class="channel-route">С сервера</span><div class="channel-mode"><span>MONO</span><span>03</span></div><span class="knob-label">Панорама · L</span><span class="rotary-knob knob-left" aria-hidden="true"></span>
+              <div class="channel-readouts"><output for="fader-guitar" id="value-guitar">−3.0</output><span>−18.4</span></div>
+              <div class="fader-area"><input id="fader-guitar" class="demo-fader" type="range" min="-60" max="6" value="-3" step="1" aria-label="Гитара, громкость в децибелах" aria-valuetext="Минус 3 децибела"><span class="fader-scale" aria-hidden="true">+6<br>0<br>−12<br>−24<br>−36<br>−60</span><div class="meter-track" aria-hidden="true"><i style="--level:75%"></i></div></div>
+              <button class="channel-mute" type="button" aria-pressed="false" aria-label="Выключить гитару в примере">M</button><div class="channel-name"><b>Гитара</b><span>Участник группы</span></div>
+            </div>
+            <div class="mixer-strip extra-channel" data-channel="keys">
+              <span class="channel-route">С сервера</span><div class="channel-mode"><span>MONO</span><span>04</span></div><span class="knob-label">Панорама · R</span><span class="rotary-knob knob-right" aria-hidden="true"></span>
+              <div class="channel-readouts"><output for="fader-keys" id="value-keys">−6.0</output><span>−22.0</span></div>
+              <div class="fader-area"><input id="fader-keys" class="demo-fader" type="range" min="-60" max="6" value="-6" step="1" aria-label="Клавиши, громкость в децибелах" aria-valuetext="Минус 6 децибел"><span class="fader-scale" aria-hidden="true">+6<br>0<br>−12<br>−24<br>−36<br>−60</span><div class="meter-track" aria-hidden="true"><i style="--level:57%"></i></div></div>
+              <button class="channel-mute" type="button" aria-pressed="false" aria-label="Выключить клавиши в примере">M</button><div class="channel-name"><b>Клавиши</b><span>Участник группы</span></div>
+            </div>
+            <div class="mixer-strip extra-channel" data-channel="voice">
+              <span class="channel-route">С сервера</span><div class="channel-mode"><span>MONO</span><span>05</span></div><span class="knob-label">Панорама · C</span><span class="rotary-knob" aria-hidden="true"></span>
+              <div class="channel-readouts"><output for="fader-voice" id="value-voice">0.0</output><span>−16.8</span></div>
+              <div class="fader-area"><input id="fader-voice" class="demo-fader" type="range" min="-60" max="6" value="0" step="1" aria-label="Вокал, громкость в децибелах" aria-valuetext="0 децибел"><span class="fader-scale" aria-hidden="true">+6<br>0<br>−12<br>−24<br>−36<br>−60</span><div class="meter-track" aria-hidden="true"><i style="--level:81%"></i></div></div>
+              <button class="channel-mute" type="button" aria-pressed="false" aria-label="Выключить вокал в примере">M</button><div class="channel-name"><b>Вокал</b><span>Участник группы</span></div>
+            </div>
+            <div class="mixer-strip master-strip" data-channel="master">
+              <span class="channel-route">Наушники / выход</span><div class="channel-mode"><span>STEREO</span><span>06</span></div><span class="knob-label">Общая громкость</span><span class="output-symbol" aria-hidden="true">◎</span>
+              <div class="channel-readouts"><output for="fader-master" id="value-master">−6.0</output><span>−20.2</span></div>
+              <div class="fader-area"><input id="fader-master" class="demo-fader" type="range" min="-60" max="0" value="-6" step="1" aria-label="Общий выход, громкость в децибелах" aria-valuetext="Минус 6 децибел"><span class="fader-scale" aria-hidden="true">0<br>−6<br>−12<br>−24<br>−36<br>−60</span><div class="meter-track stereo-meter" aria-hidden="true"><i style="--level:68%"></i></div></div>
+              <button class="channel-mute" type="button" aria-pressed="false" aria-label="Выключить общий выход в примере">M</button><div class="channel-name"><b>Stereo Out</b><span>Только ваш микс</span></div>
+            </div>
+          </div>
+          <div class="console-bottom"><span><i aria-hidden="true"></i> Попробуйте фейдеры. Этот пример не воспроизводит звук.</span><span>PS / 01</span></div>
+        </div>
+
+        <div class="demo-panel library-preview" role="tabpanel" id="panel-library" aria-labelledby="tab-library" tabindex="0" hidden>
+          <aside class="preview-sidebar" aria-hidden="true"><span class="preview-mini-brand"><img src="/icon.svg" alt="" width="28" height="28"> Psalmony</span><span class="preview-group">Наша группа <small>Музыкальное пространство</small></span><span class="preview-nav-item active">♫ &nbsp; Библиотека</span><span class="preview-nav-item">☷ &nbsp; Сет-листы</span><span class="preview-nav-item">◷ &nbsp; Календарь</span><span class="sidebar-foot">Всё начинается с песни.</span></aside>
+          <div class="library-content"><div class="illustration-topline"><span>Библиотека / Песни</span><span>Пример библиотеки</span></div><h2>Ваш репертуар</h2><p>Идеи, к которым хочется возвращаться.</p><div class="library-grid"><div class="demo-song-list"><div class="demo-album"><img src="/site/repertoire-art.svg" width="80" height="80" alt="Оригинальная абстрактная обложка: светлая лента на сиреневом фоне"><div><small>АЛЬБОМ</small><b>Внутри тишины</b><span>Три музыкальных эскиза</span></div></div><div class="demo-song-row selected"><span>01</span><div><b>Тихий свет</b><small>Авторский пример</small></div><span>D</span><span>72 BPM</span></div><div class="demo-song-row"><span>02</span><div><b>Там, где мы</b><small>Авторский пример</small></div><span>G</span><span>96 BPM</span></div><div class="demo-song-row"><span>03</span><div><b>Новый день</b><small>Авторский пример</small></div><span>C</span><span>84 BPM</span></div><div class="library-format-tags"><span>Аккорды</span><span>PDF</span><span>MusicXML</span><span>Аудио</span></div></div><article class="song-sheet"><span class="sheet-kicker">ПРИМЕР ПЕСНИ</span><h3>Тихий свет</h3><div class="sheet-meta"><span>D мажор</span><span>72 BPM</span><span>4/4</span></div><p class="sheet-section">Куплет 1</p><div class="lyric"><b>D <span>G</span></b><p>Тихий свет ложится на ладони,</p><b>Bm <span>A</span></b><p>Новый день рождается в окне.</p><b>G <span>D</span></b><p>Этот звук нас снова познакомит</p><b>Em <span>A</span></b><p>С музыкой, что жила в тишине.</p></div><span class="sheet-end">Куплет → Припев → Куплет → Припев</span></article></div></div>
+        </div>
+
+        <div class="demo-panel setlist-preview" role="tabpanel" id="panel-setlist" aria-labelledby="tab-setlist" tabindex="0" hidden>
+          <div class="setlist-title"><span class="eyebrow">ПРИМЕР ПРОГРАММЫ</span><h2>Пятница.<br> Наша музыка.</h2><span class="setlist-date">Репетиция · 19:00</span><p>Одна программа для всей группы.<br>От первого аккорда до финальной паузы.</p><div class="example-members" aria-hidden="true"><span>А</span><span>М</span><span>Д</span><span>В</span><small>Наша группа</small></div></div>
+          <div class="setlist-paper"><div class="setlist-paper-head"><b>Сет-лист</b><span>Порядок выступления</span></div><ol class="example-set"><li><span class="set-number">01</span><div><b>Тихий свет</b><span>Начинаем с гитары</span></div><span class="set-key">D</span></li><li><span class="set-number">02</span><div><b>Там, где мы</b><span>Припев — два раза</span></div><span class="set-key">G</span></li><li class="set-break"><span>↳</span><div><b>Небольшая пауза</b><span>Проверяем строй</span></div><span>1:00</span></li><li><span class="set-number">03</span><div><b>Новый день</b><span>Финал — вместе</span></div><span class="set-key">C</span></li></ol><div class="setlist-paper-foot"><svg class="icon" aria-hidden="true"><use href="#note"/></svg><span>Своя тональность. Общая программа.</span></div></div>
+        </div>
+        <figcaption><span>Иллюстрации интерфейса. Имена, песни и уровни — примеры.</span><span id="demo-caption">Studio — личный микс каждого музыканта.</span></figcaption>
+      </figure>
+      <div class="hero-bottom"><span>Для репетиций. Для сцены. Для своей музыки.</span><a href="#possibilities" aria-label="Посмотреть возможности Psalmony">Листайте дальше <span aria-hidden="true">↓</span></a></div>
+    </section>
+
+    <section class="workflow wrap section-space" id="possibilities" aria-labelledby="workflow-title">
+      <div class="section-heading"><p class="eyebrow">От идеи до выступления</p><h2 id="workflow-title">Меньше поисков.<br>Больше музыки.</h2><p class="section-description">Когда песни, ноты и планы собраны вместе,<br class="desktop-break"> проще услышать друг друга.</p></div>
+      <div class="workflow-grid">
+        <article><span class="step-number">01 / СОБЕРИТЕ</span><svg class="feature-icon" aria-hidden="true"><use href="#note"/></svg><h3>Репертуар под рукой</h3><p>Тексты и аккорды, ноты PDF и MusicXML, аудиозаписи и обложки. Ищите песню по названию или строчке, меняйте тональность под свой голос.</p><span class="feature-detail">Песни · Альбомы · Аранжировки</span></article>
+        <article><span class="step-number">02 / ПОДГОТОВЬТЕ</span><svg class="feature-icon" aria-hidden="true"><use href="#set"/></svg><h3>Программа без суеты</h3><p>Расставьте песни, добавьте паузы и заметки. Сохраните материалы для офлайн-доступа и проверьте готовность до выхода на сцену.</p><span class="feature-detail">Сет-листы · Календарь · Офлайн</span></article>
+        <article><span class="step-number">03 / СЫГРАЙТЕ</span><svg class="feature-icon" aria-hidden="true"><use href="#headphones"/></svg><h3>В одном ритме</h3><p>Пригласите музыкантов в группу. Следуйте за ведущим по программе, а в настольной Studio настройте свой микс для совместной репетиции.</p><span class="feature-detail">Группы · Сцена · Studio</span></article>
+      </div>
+    </section>
+
+    <section class="studio-story" id="studio" aria-labelledby="studio-title">
+      <div class="wrap studio-story-grid">
+        <div class="studio-story-copy"><p class="eyebrow">Psalmony Studio / beta</p><h2 id="studio-title">У каждого —<br>свой микс.<br><span>Музыка — общая.</span></h2><p>Добавьте гитару. Уберите лишний возврат.<br>Найдите баланс, в котором слышно себя и группу.</p><p>Studio в настольном клиенте даёт каждому участнику отдельные уровни, панораму и Mute/Solo. Ваши настройки меняют только то, что слышите вы.</p><a class="text-link light-link" href="#download">Выбрать настольный клиент <svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a></div>
+        <div class="studio-story-visual" aria-hidden="true"><div class="mix-lines"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="balance-label"><span>СЛЫШАТЬ ДРУГ ДРУГА</span><span>PS / STUDIO</span></div><div class="balance-track"><span>Вы</span><i><b></b></i><span>Группа</span></div><p>На одной волне.</p></div>
+      </div>
+      <div class="wrap rehearsal-requirements"><div class="requirements-intro"><h3>До первого аккорда</h3><p>Совместная игра чувствительна к задержке. Начните с короткой проверки вдвоём.</p></div><div><svg class="icon" aria-hidden="true"><use href="#screen"/></svg><b>Настольный клиент</b><p>Аудиокомната работает в клиентах macOS и Windows.</p></div><div><svg class="icon" aria-hidden="true"><use href="#headphones"/></svg><b>Проводные наушники</b><p>Подключите их до начала репетиции и выберите аудиоустройства.</p></div><div><svg class="icon" aria-hidden="true"><use href="#signal"/></svg><b>Стабильная сеть</b><p>По возможности используйте кабель. Задержка зависит от сети и оборудования.</p></div></div>
+    </section>
+
+    <section class="devices wrap section-space" id="devices" aria-labelledby="devices-title">
+      <div class="mobile-preview">
+        <div class="mobile-note top-note"><span class="note-line"></span>Партия всегда с вами</div>
+        <div class="phone-frame"><div class="phone-speaker" aria-hidden="true"></div><div class="phone-screen"><div class="phone-app-head"><img src="/icon.svg" width="24" height="24" alt=""><b>Psalmony</b><span aria-hidden="true">•••</span></div><p class="phone-breadcrumb">СЦЕНА / ПРИМЕР</p><h3>Тихий свет</h3><div class="phone-song-meta"><span>D</span><span>72 BPM</span><span>4/4</span></div><div class="phone-part"><span>Куплет</span><span>Припев</span></div><div class="phone-lyrics"><small>КУПЛЕТ 1</small><b>D <span>G</span></b><p>Тихий свет ложится<br>на ладони,</p><b>Bm <span>A</span></b><p>Новый день рождается<br>в окне.</p><b>G <span>D</span></b><p>Этот звук нас снова<br>познакомит</p></div><div class="phone-bottom"><span>‹</span><span>01 / 03</span><span>›</span></div></div></div>
+        <div class="mobile-note bottom-note"><svg class="icon" aria-hidden="true"><use href="#phone"/></svg>Иллюстрация режима сцены</div>
+      </div>
+      <div class="devices-copy"><p class="eyebrow">За столом. На репетиции. На сцене.</p><h2 id="devices-title">Продолжайте<br>с любого экрана.</h2><p>Подготовьте программу на компьютере, откройте аккорды на планшете, загляните в сет-лист с телефона. Один аккаунт — ваша музыка рядом.</p><div class="device-options"><div><span class="device-number">01</span><div><h3>В браузере</h3><p>Библиотека, группы, сет-листы и режим сцены. Откройте Psalmony и войдите в аккаунт.</p></div></div><div><span class="device-number">02</span><div><h3>На домашнем экране</h3><p>Установите PWA через меню браузера на поддерживаемом устройстве. Доступность установки зависит от браузера.</p></div></div><div><span class="device-number">03</span><div><h3>Даже без связи</h3><p>Заранее скачайте выступление с вложениями. Перед выходом проверьте статус «Готово офлайн» — браузер может очищать локальный кэш.</p></div></div></div><a class="text-link" href="/app">Открыть веб-приложение <svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a></div>
+    </section>
+
+    <section class="download-section wrap" id="download" aria-labelledby="download-title">
+      <div class="download-intro"><p class="eyebrow">Начнём с первой песни</p><h2 id="download-title">Место для<br>вашей группы.</h2><p>Создайте аккаунт, соберите группу<br>и пригласите музыкантов.</p><a class="button button-dark" href="/app">Начать в браузере <svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a></div>
+      <div class="download-clients"><div class="download-heading"><h3>Для репетиций со звуком</h3><span class="beta-tag">beta</span></div><p>Настольный клиент с библиотекой и Studio.</p><a class="download-row" href="/downloads/Psalmony-0.6.0-mac-universal.dmg" download><span class="platform-monogram" aria-hidden="true">M</span><span><b>Скачать для macOS</b><small>Intel и Apple Silicon · DMG</small></span><svg class="icon" aria-hidden="true"><use href="#download"/></svg></a><a class="download-row" href="/downloads/Psalmony-0.6.0-windows-x64.exe" download><span class="platform-monogram" aria-hidden="true">W</span><span><b>Скачать для Windows</b><small>x64 · EXE</small></span><svg class="icon" aria-hidden="true"><use href="#download"/></svg></a><p class="release-note">Пилотные сборки. macOS — без нотариализации; Windows — без цифровой подписи. Проверка на физических устройствах и совместная игра группы продолжаются. Система может показать предупреждение при установке.</p></div>
+    </section>
+
+    <section class="faq wrap section-space" aria-labelledby="faq-title"><div class="faq-intro"><p class="eyebrow">Перед началом</p><h2 id="faq-title">Пара важных<br>нот.</h2></div><div class="faq-list">
+      <details><summary>Можно ли играть вместе прямо в браузере?<svg class="icon" aria-hidden="true"><use href="#plus"/></svg></summary><p>В браузере доступны песни, программа, инструменты подготовки и режим сцены. Для совместной передачи звука нужен настольный клиент Psalmony для macOS или Windows. Следование за ведущим в режиме сцены переключает песни и разделы, но не синхронизирует аудио.</p></details>
+      <details><summary>Что нужно для первой репетиции?<svg class="icon" aria-hidden="true"><use href="#plus"/></svg></summary><p>Аккаунт, общая группа и настольные клиенты у участников. Подключите проводные наушники, выберите вход и выход, затем откройте комнату из сет-листа. Сначала проверьте звук вдвоём на умеренной громкости. Bluetooth добавляет задержку; качество совместной игры зависит от оборудования и сетевого маршрута.</p></details>
+      <details><summary>Сколько музыкантов может быть в Studio?<svg class="icon" aria-hidden="true"><use href="#plus"/></svg></summary><p>Текущая аудиокомната рассчитана на восемь подключений. Это ограничение сервера, а не гарантия качества игры: репетиция восьми человек на физических устройствах пока не подтверждена. Проверьте ваш состав и соединение до полноценной репетиции.</p></details>
+      <details><summary>Кто увидит песни моей группы?<svg class="icon" aria-hidden="true"><use href="#plus"/></svg></summary><p>Библиотека доступна участникам соответствующей группы. Владелец приглашает музыкантов, назначает роли и может отозвать доступ. В одном аккаунте можно участвовать в нескольких группах.</p></details>
+      <details><summary>Что означает beta?<svg class="icon" aria-hidden="true"><use href="#plus"/></svg></summary><p>Psalmony развивается: некоторые возможности и работа на конкретных устройствах ещё требуют проверки. Сейчас нет восстановления пароля, подтверждения почты и входа через сторонние аккаунты. Сохраняйте пароль и экспортируйте важные материалы. Настольные сборки не опубликованы в магазинах приложений.</p></details>
+    </div></section>
+  </main>
+
+  <footer class="site-footer wrap"><div class="footer-top"><a class="brand" href="/" aria-label="Psalmony — главная"><img src="/icon.svg" width="34" height="34" alt=""><span>Psalmony</span></a><p>У музыки есть место.</p><a class="text-link" href="/app">Встретимся там <svg class="icon" aria-hidden="true"><use href="#arrow"/></svg></a></div><div class="footer-bottom"><span>© 2026 Psalmony · Музыкальное пространство</span><nav aria-label="Юридическая информация"><a href="/privacy">Конфиденциальность</a><a href="/terms">Условия использования</a></nav></div></footer>
+</body>
+</html>

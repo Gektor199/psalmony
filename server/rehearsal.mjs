@@ -25,7 +25,7 @@ export async function createRehearsalSchema(pool) {
    PRIMARY KEY(band,set_id,musician));
  `);
 }
-export function rehearsalHandlers({q,all,run,transaction,need,owner,json,send,fail,config={}}) {
+export function rehearsalHandlers({lockAccount,q,all,run,transaction,need,owner,json,send,fail,config={}}) {
  let cachedProbe,pendingProbe;
  const check=async()=>{
   if(cachedProbe&&Date.now()-cachedProbe.at<5000)return cachedProbe.value;
@@ -41,7 +41,7 @@ export function rehearsalHandlers({q,all,run,transaction,need,owner,json,send,fa
   if(!b.state.setlists.some(set=>set.id===id))fail(404,'Сет-лист не найден');
  };
  return async(req,res,url)=>{
-  const s=await need(req),p=url.pathname;
+  let s=await need(req);const p=url.pathname;
   if(p==='/api/rehearsal'&&req.method==='GET'){
    const setId=url.searchParams.get('setId');await ensureSet(s.band,setId);
    const reports=await all(`SELECT r.musician,r.report,r.revision,r.updated_at,u.name FROM rehearsal_reports r
@@ -52,7 +52,7 @@ export function rehearsalHandlers({q,all,run,transaction,need,owner,json,send,fa
    owner(s);const b=await json(req);
    if(!validAddress(b.address)||typeof b.location!=='string'||!b.location.trim()||b.location.length>100||!Number.isInteger(b.revision)||b.revision<0)fail(400,'Укажите адрес вида host:22124 и город сервера');
    await transaction(async()=>{
-    await q('SELECT id FROM bands WHERE id=? FOR UPDATE',s.band);
+    s=await lockAccount(s,{band:true});if(p==='/api/rehearsal/room')owner(s);if(p==='/api/rehearsal/report')await ensureSet(s.band,b.setId);
     const current=await room(s.band);if(current.revision!==b.revision)fail(409,'Настройки комнаты изменились. Обновите комнату.');
     await run(`INSERT INTO rehearsal_rooms(band,address,location,revision) VALUES(?,?,?,1)
      ON CONFLICT(band) DO UPDATE SET address=EXCLUDED.address,location=EXCLUDED.location,revision=rehearsal_rooms.revision+1`,s.band,b.address.trim(),b.location.trim());
@@ -70,7 +70,7 @@ export function rehearsalHandlers({q,all,run,transaction,need,owner,json,send,fa
    if(!validReport(b.report)||!Number.isInteger(b.revision)||b.revision<0)fail(400,'Проверьте данные проверки: задержки от 0 до 2000 мс или пустые поля');
    let result;
    await transaction(async()=>{
-    await q('SELECT id FROM bands WHERE id=? FOR UPDATE',s.band);
+    s=await lockAccount(s,{band:true});if(p==='/api/rehearsal/room')owner(s);if(p==='/api/rehearsal/report')await ensureSet(s.band,b.setId);
     const current=await q('SELECT revision FROM rehearsal_reports WHERE band=? AND set_id=? AND musician=?',s.band,b.setId,s.user);
     if((current?.revision||0)!==b.revision)fail(409,'Ваша проверка изменена в другой вкладке. Обновите комнату.');
     const r=await room(s.band);
