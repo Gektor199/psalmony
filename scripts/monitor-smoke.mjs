@@ -14,7 +14,7 @@ assert.equal((await api('audio')).running,false,'Disconnect the current rehearsa
 let fixture;
 const sql=q=>execFileSync('ssh',['-o','BatchMode=yes','-i',process.env.PSALMONY_SSH_KEY||`${process.env.HOME}/.ssh/id_ed25519`,'root@91.226.80.181','cd /opt/psalmony && docker compose --env-file deploy/ekaterinburg/.env -f deploy/ekaterinburg/compose.yaml exec -T postgres psql -v ON_ERROR_STOP=1 -U psalmony -d psalmony'],{input:q,encoding:'utf8'});
 try{
- await api('preview',{});await pause(250);let s=await api('audio');assert.ok(s.running&&s.preview&&!s.connected);assert.equal(s.monitorMode,'off');assert.equal(s.micMuted,true);assert.equal(s.master,0);
+ await api('preview',{});let s;for(let i=0;i<50;i++){await pause(100);s=await api('audio');assert.equal(s.master,0);assert.equal(s.outputLevel,0);assert.equal(s.error,null);if(s.inputLevel>0)break;}assert.ok(s.inputLevel>0,'Microphone did not produce a signal within 5 seconds');assert.ok(s.running&&s.preview&&!s.connected);assert.equal(s.monitorMode,'off');assert.equal(s.micMuted,true);assert.equal(s.master,0);
  await api('controls',{inputGain:0,monitorMode:'local'});await pause(150);const zero=await collect();assert.ok(peak(zero,'inputLevel')>0,'A live microphone signal is needed');assert.equal(peak(zero,'inputPostLevel'),0);assert.ok(zero.every(s=>s.sent===0&&s.received===0&&s.micMuted));
  await api('controls',{inputGain:.5});await pause(150);const local=await collect();assert.ok(peak(local,'inputPostLevel')>0);assert.ok(local.every(s=>s.monitorMode==='local'&&s.localMonitor&&s.sent===0&&s.received===0));
  assert.equal((await raw('controls',{monitorMode:'server'})).status,400);assert.equal((await api('audio')).monitorMode,'local');
