@@ -91,7 +91,7 @@ const server=http.createServer(async(req,res)=>{
    if(req.headers['sec-fetch-site']==='cross-site')fail(403,'Запрос с другого сайта отклонён');
  }
  if(p.startsWith('/api/images')){if(await handleImages(req,res,url)!==false)return;}
- if(p==='/api/health'){await pool.query('SELECT 1');return send(res,200,{ok:true,version:'0.6.1',database:'postgresql'});}
+ if(p==='/api/health'){await pool.query('SELECT 1');return send(res,200,{ok:true,version:'0.6.2',database:'postgresql'});}
  if(p==='/api/audio/ticket'&&req.method==='POST'){
   const s=await need(req);await json(req);rate(req,'audio-ticket',10);const secret=Buffer.from(process.env.AUDIO_TICKET_SECRET||'','hex');if(secret.length!==32||!process.env.AUDIO_CLIENT_ADDRESS)fail(503,'Свой аудиосервер пока не настроен');
   const claims=await transaction(async()=>{const current=await lockAccount(s,{band:true});return {v:1,id:randomBytes(16).toString('hex'),key:randomBytes(32).toString('hex'),band:current.band,user:current.user,session:current.token,name:current.name.slice(0,80),expires:Date.now()+3600000};});
